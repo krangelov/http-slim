@@ -330,7 +330,7 @@ outputText text =
             { rspCode = (2,0,0)
             , rspReason = "OK"
             , rspHeaders = [Header HdrServer defaultServer
-                           ,Header HdrContentType "text/plain"
+                           ,Header HdrContentType "text/plain; charset=UTF8"
                            ,Header HdrContentLength (show (length text))
                            ]
             , rspBody = text
