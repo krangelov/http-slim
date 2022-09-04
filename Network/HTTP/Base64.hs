@@ -4,7 +4,7 @@
 -- Copyright   :  (c) Dominic Steinitz 2005, Warrick Gray 2002
 -- License     :  BSD-style (see the file ReadMe.tex)
 --
--- Maintainer  :  dominic.steinitz@blueyonder.co.uk
+-- Maintainer  :  Krasimir Angelov <kr.angelov@gmail.com>
 -- Stability   :  experimental
 -- Portability :  portable
 --

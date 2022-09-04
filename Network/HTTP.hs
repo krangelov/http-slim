@@ -6,7 +6,7 @@
 -- Copyright   :  See LICENSE file
 -- License     :  BSD
 --
--- Maintainer  :  Ganesh Sittampalam <ganesh@earth.li>
+-- Maintainer  :  Krasimir Angelov <kr.angelov@gmail.com>
 -- Stability   :  experimental
 -- Portability :  non-portable (not tested)
 --
