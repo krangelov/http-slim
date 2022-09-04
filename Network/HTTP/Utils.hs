@@ -14,6 +14,7 @@ module Network.HTTP.Utils
        ( trim     -- :: String -> String
        , trimL    -- :: String -> String
        , trimR    -- :: String -> String
+       , parseInt
 
        , crlf     -- :: String
        , lf       -- :: String
@@ -144,3 +145,9 @@ type Result a = Either ConnError   {- error  -}
 
 responseParseError :: String -> String -> Result a
 responseParseError loc v = failWith (ErrorParse (loc ++ ' ':v))
+
+parseInt :: String -> Maybe Int
+parseInt string =
+  case reads string of
+    [(n,"")] -> Just n
+    _        -> Nothing

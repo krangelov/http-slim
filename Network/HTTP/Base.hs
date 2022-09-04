@@ -28,8 +28,9 @@ module Network.HTTP.Base
        , Response(..)
        , RequestMethod(..)
 
-       , parseResponseHead      -- :: [String] -> Result ResponseData
-       , parseRequestHead       -- :: [String] -> Result RequestData
+       , parseResponseHead
+       , parseRequestHead
+       , parseRequestMethod
 
        , ResponseNextStep(..)
        , matchResponse
@@ -80,6 +81,7 @@ import Data.List     ( find )
 import Data.Maybe    ( listToMaybe, fromMaybe )
 
 import Network.HTTP.Headers
+import Network.HTTP.Cookie ( renderCookies )
 import Network.HTTP.Utils ( trim, crlf, sp, 
                             ConnError(..), Result, failWith, readsOne,
                             responseParseError )
@@ -160,6 +162,9 @@ instance Show RequestMethod where
       CONNECT  -> "CONNECT"
       Custom c -> c
 
+parseRequestMethod :: String -> RequestMethod
+parseRequestMethod s = fromMaybe (Custom s) (lookup s rqMethodMap)
+
 rqMethodMap :: [(String, RequestMethod)]
 rqMethodMap = [("HEAD",    HEAD),
                ("PUT",     PUT),
@@ -202,6 +207,9 @@ instance HasHeaders Request where
     getHeaders = rqHeaders
     setHeaders rq hdrs = rq { rqHeaders=hdrs }
 
+    getCookies rq = snd (headersToCookies "" HdrCookie (rqHeaders rq))
+    setCookies rq cookies = replaceHeader HdrCookie (renderCookies cookies) rq
+
 -- | For easy pattern matching, HTTP response codes @xyz@ are
 -- represented as @(x,y,z)@.
 type ResponseCode  = (Int,Int,Int)
@@ -239,6 +247,9 @@ instance Show Response where
 instance HasHeaders Response where
   getHeaders = rspHeaders
   setHeaders rsp hdrs = rsp { rspHeaders=hdrs }
+
+  getCookies rsp = snd (headersToCookies "" HdrSetCookie (rspHeaders rsp))
+  setCookies rsp cookies = replaceHeader HdrCookie (renderCookies cookies) rsp
 
 
 ------------------------------------------------------------------
@@ -284,7 +295,7 @@ setRequestBody :: Request -> (String, String) -> Request
 setRequestBody req (typ, body) = req' { rqBody=body }
   where
     req' = replaceHeader HdrContentType typ .
-           replaceHeader HdrContentLength (show $ length body) $
+           replaceHeader HdrContentLength (show (length body)) $
            req
 
 -----------------------------------------------------------------
@@ -614,6 +625,7 @@ getSSLContext uri =
                    SSL.contextSetCiphers ctxt "DEFAULT"
                    SSL.contextSetVerificationMode ctxt SSL.VerifyNone
                    return (Just ctxt)
+    _        -> return Nothing
 
 -- | A default server string. The string is @\"haskell-http-slim/$version\"@
 -- where @$version@ is the version of this HTTP package.

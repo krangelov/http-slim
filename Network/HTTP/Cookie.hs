@@ -14,14 +14,13 @@
 -----------------------------------------------------------------------------
 module Network.HTTP.Cookie
        ( Cookie(..)
+       , mkSimpleCookie, mkCookie
        , cookieMatch          -- :: (String,String) -> Cookie -> Bool
 
           -- functions for translating cookies and headers.
-       , cookiesToHeader      -- :: [Cookie] -> Header
-       , processCookieHeaders -- :: String -> [Header] -> ([String], [Cookie])
+       , renderCookies
+       , parseCookies
        ) where
-
-import Network.HTTP.Headers
 
 import Data.Char
 import Data.List
@@ -31,6 +30,7 @@ import Text.ParserCombinators.Parsec
    ( Parser, char, many, many1, satisfy, parse, option, try
    , (<|>), sepBy1
    )
+import Network.HTTP.Utils ( parseInt )
 
 ------------------------------------------------------------------
 ----------------------- Cookie Stuff -----------------------------
@@ -40,30 +40,93 @@ import Text.ParserCombinators.Parsec
 -- See its relevant specs for authoritative details.
 data Cookie
  = MkCookie
-    { ckDomain  :: String
+    { ckDomain  :: String         -- Maybe String
     , ckName    :: String
     , ckValue   :: String
     , ckPath    :: Maybe String
     , ckComment :: Maybe String
     , ckVersion :: Maybe String
+    , ckMaxAge  :: Maybe Int
+    , ckSecure  :: Bool
     }
     deriving(Show,Read)
+
+-- | Constructs a cookie with the given name and value.  Version is set to 1;
+--   path, domain, and maximum age are set to @Nothing@; and the secure flag is
+--   set to @False@.  Constructing the cookie does not cause it to be set; to do
+--   that, call 'setCookie' on it.
+mkSimpleCookie
+    :: String -- ^ The name of the cookie to construct.
+    -> String -- ^ The value of the cookie to construct.
+    -> Cookie -- ^ A cookie with the given name and value.
+mkSimpleCookie name value = MkCookie {
+                              ckName = name,
+                              ckValue = value,
+                              ckVersion = Just "1",
+                              ckPath = Nothing,
+                              ckDomain = "",
+                              ckMaxAge = Nothing,
+                              ckSecure = False,
+                              ckComment = Nothing
+                            }
+
+
+-- | Constructs a cookie with the given parameters.  Version is set to 1.
+--   Constructing the cookie does not cause it to be set; to do that, call 'setCookie'
+--   on it.
+mkCookie
+    :: String -- ^ The name of the cookie to construct.
+    -> String -- ^ The value of the cookie to construct.
+    -> (Maybe String) -- ^ The path of the cookie to construct.
+    -> String -- ^ The domain of the cookie to construct.
+    -> (Maybe Int) -- ^ The maximum age of the cookie to construct, in seconds.
+    -> Bool -- ^ Whether to flag the cookie to construct as secure.
+    -> Cookie -- ^ A cookie with the given parameters.
+mkCookie name value maybePath domain maybeMaxAge secure
+    = MkCookie {
+        ckName = name,
+        ckValue = value,
+        ckVersion = Just "1",
+        ckPath = maybePath,
+        ckDomain = domain,
+        ckMaxAge = maybeMaxAge,
+        ckSecure = secure,
+        ckComment = Nothing
+      }
 
 instance Eq Cookie where
     a == b  =  ckDomain a == ckDomain b
             && ckName a == ckName b
             && ckPath a == ckPath b
 
--- | @cookieToHeaders ck@ serialises @Cookie@s to an HTTP request header.
-cookiesToHeader :: [Cookie] -> Header
-cookiesToHeader cs = Header HdrCookie (mkCookieHeaderValue cs)
-
 -- | Turn a list of cookies into a key=value pair list, separated by
--- semicolons.
-mkCookieHeaderValue :: [Cookie] -> String
-mkCookieHeaderValue = intercalate "; " . map mkCookieHeaderValue1
+-- commas.
+renderCookies :: [Cookie] -> String
+renderCookies = intercalate "," . map renderCookie
   where
-    mkCookieHeaderValue1 c = ckName c ++ "=" ++ ckValue c
+    renderCookie cookie =
+      intercalate ";" $ map printNameValuePair $ nameValuePairs cookie
+      
+    printNameValuePair (name, Nothing   ) = name
+    printNameValuePair (name, Just value) = name ++ "=" ++ value
+    
+    nameValuePairs cookie = [(ckName cookie, Just (ckValue cookie))]
+                            ++ (case ckComment cookie of
+                                  Nothing -> []
+                                  Just comment -> [("Comment", Just comment)])
+                            ++ (case ckDomain cookie of
+                                  ""     -> []
+                                  domain -> [("Domain", Just domain)])
+                            ++ (case ckMaxAge cookie of
+                                  Nothing -> []
+                                  Just maxAge -> [("Max-Age", Just $ show maxAge)])
+                            ++ (case ckPath cookie of
+                                  Nothing -> []
+                                  Just path -> [("Path", Just $ path)])
+                            ++ (case ckSecure cookie of
+                                  False -> []
+                                  True -> [("Secure", Nothing)])
+                            ++ [("Version", Just $ show $ ckVersion cookie)]
 
 -- | @cookieMatch (domain,path) ck@ performs the standard cookie
 -- match wrt the given domain and path.
@@ -75,16 +138,12 @@ cookieMatch (dom,path) ck =
    Just p  -> p `isPrefixOf` path
 
 
--- | @processCookieHeaders dom hdrs@
-processCookieHeaders :: String -> [Header] -> ([String], [Cookie])
-processCookieHeaders dom hdrs = foldr (headerToCookies dom) ([],[]) hdrs
-
 -- | @headerToCookies dom hdr acc@
-headerToCookies :: String -> Header -> ([String], [Cookie]) -> ([String], [Cookie])
-headerToCookies dom (Header HdrSetCookie val) (accErr, accCookie) =
-    case parse cookies "" val of
-        Left{}  -> (val:accErr, accCookie)
-        Right x -> (accErr, x ++ accCookie)
+parseCookies :: String -> String -> ([String], [Cookie]) -> ([String], [Cookie])
+parseCookies dom  val (accErr, accCookie) =
+  case parse cookies "" val of
+    Left{}  -> (val:accErr, accCookie)
+    Right x -> (accErr, x ++ accCookie)
   where
    cookies :: Parser [Cookie]
    cookies = sepBy1 cookie (char ',')
@@ -97,13 +156,23 @@ headerToCookies dom (Header HdrSetCookie val) (accErr, accCookie) =
           _    <- spaces_l
           val1 <- cvalue
           args <- cdetail
-          return $ mkCookie name val1 args
+          return (MkCookie
+                    { ckName    = name
+                    , ckValue   = val1
+                    , ckDomain  = map toLower (fromMaybe dom (lookup "domain" args))
+                    , ckPath    = lookup "path"    args
+                    , ckVersion = lookup "version" args
+                    , ckComment = lookup "comment" args
+                    , ckMaxAge  = case lookup "max-age" args of
+                                    Nothing -> Nothing
+                                    Just s  -> parseInt s
+                    , ckSecure  = isJust (lookup "secure" args)
+                    })
 
    cvalue :: Parser String
+   cvalue = quotedstring <|> many1 (satisfy $ not . (==';')) <|> return ""
 
    spaces_l = many (satisfy isSpace)
-
-   cvalue = quotedstring <|> many1 (satisfy $ not . (==';')) <|> return ""
 
    -- all keys in the result list MUST be in lower case
    cdetail :: Parser [(String,String)]
@@ -116,19 +185,6 @@ headerToCookies dom (Header HdrSetCookie val) (accErr, accCookie) =
                s2 <- option "" (char '=' >> spaces_l >> cvalue)
                return (map toLower s1,s2)
            )
-
-   mkCookie :: String -> String -> [(String,String)] -> Cookie
-   mkCookie nm cval more =
-          MkCookie { ckName    = nm
-                   , ckValue   = cval
-                   , ckDomain  = map toLower (fromMaybe dom (lookup "domain" more))
-                   , ckPath    = lookup "path" more
-                   , ckVersion = lookup "version" more
-                   , ckComment = lookup "comment" more
-                   }
-headerToCookies _ _ acc = acc
-
-
 
 
 word, quotedstring :: Parser String

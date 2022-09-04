@@ -122,7 +122,7 @@ import Network.URI
    , parseURI, parseURIReference, relativeTo
    , escapeURIString, isUnescapedInURI
    )
-import Network.HTTP hiding ( sendHTTP_notify )
+import Network.HTTP hiding ( sendHTTP_notify, getCookies, setCookies )
 import Network.HTTP.HandleStream ( sendHTTP_notify )
 import Network.HTTP.Auth
 import Network.HTTP.Cookie
@@ -734,7 +734,7 @@ request' nullVal rqState rq = do
        case auth of
          Nothing -> return rq
          Just x  -> return (insertHeader HdrAuthorization (withAuthority x rq) rq)
-   let rq'' = if not $ null cookies then insertHeaders [cookiesToHeader cookies] rq' else rq'
+   let rq'' = if not $ null cookies then insertHeaders [Header HdrCookie (renderCookies cookies)] rq' else rq'
    p <- getProxy
    def_ua <- gets bsUserAgent
    let defaultOpts =
@@ -746,7 +746,7 @@ request' nullVal rqState rq = do
                 , normUserAgent = def_ua
                 , normCustoms   =
                     maybe []
-                          (\ authS -> [\ _ r -> insertHeader HdrProxyAuthorization (withAuthority authS r) r])
+                          (\authS -> [\ _ r -> insertHeader HdrProxyAuthorization (withAuthority authS r) r])
                           ath
                 }
    let final_req = normalizeRequest defaultOpts rq''
@@ -880,7 +880,7 @@ request' nullVal rqState rq = do
                     let toGet = x `elem` [2,3]
                         method = if toGet then GET else rqMethod rq
                         rq1 = rq { rqMethod=method, rqURI=newURI_abs }
-                        rq2 = if toGet then (replaceHeader HdrContentLength "0") (rq1 {rqBody = nullVal}) else rq1
+                        rq2 = if toGet then replaceHeader HdrContentLength "0" (rq1 {rqBody = nullVal}) else rq1
 
                     request' nullVal
                             rqState{ reqDenies     = 0
@@ -990,7 +990,7 @@ handleCookies uri dom cookieHeaders = do
        (out $ "Accepting cookies with names: " ++ unwords (map ckName newCookies'))
   mapM_ addCookie newCookies'
  where
-  (errs, newCookies) = processCookieHeaders dom cookieHeaders
+  (errs, newCookies) = headersToCookies dom HdrSetCookie cookieHeaders
 
 handleConnectionClose :: URIAuth -> [Header]
                       -> BrowserAction Connection ()

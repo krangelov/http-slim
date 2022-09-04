@@ -180,7 +180,7 @@ setupCharset conn hdrs =
   case lookupHeader HdrContentType hdrs of
     Just val -> case dropWhile (/=';') val of
                   (';':cs) -> case break (=='=') cs of
-                                (xs,'=':ys) | trim (map toLower xs) == "charset" -> do
+                                (xs,'=':ys) | trim (map toLower xs) == "charset" ->
                                      do enc <- mkTextEncoding (trim ys++"//IGNORE")
                                         setEncoding conn enc
                                 _ -> return ()

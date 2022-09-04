@@ -76,7 +76,6 @@ flag network-bsd
 
 Library
   Exposed-modules:
-                 Network.TCP,
                  Network.HTTP,
                  Network.HTTP.Headers,
                  Network.HTTP.Base,
@@ -84,8 +83,10 @@ Library
                  Network.HTTP.Cookie,
                  Network.HTTP.Proxy,
                  Network.HTTP.HandleStream,
-                 Network.Browser
+                 Network.Browser,
+                 Network.FastCGI
   Other-modules:
+                 Network.TCP,
                  Network.HTTP.Base64,
                  Network.HTTP.MD5Aux,
                  Network.HTTP.Utils
@@ -106,6 +107,8 @@ Library
     , mtl           >= 2.0.0.0   && < 2.4
     , network       >= 2.4       && < 3.2
     , HsOpenSSL
+    , bytestring
+    , containers
 
   default-language: Haskell98
   default-extensions: FlexibleInstances

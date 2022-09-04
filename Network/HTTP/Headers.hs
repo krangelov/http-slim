@@ -35,12 +35,14 @@ module Network.HTTP.Headers
 
    , parseHeader           -- :: parseHeader :: String -> Result Header
    , parseHeaders          -- :: [String] -> Result [Header]
+   , variableToHeaderName
 
-   , HeaderSetter
+   , Cookie(..), headersToCookies
    ) where
 
-import Data.Char (toLower)
-import Network.HTTP.Utils ( trim, split, crlf, Result, failParse )
+import Data.Char (toLower,toUpper)
+import Network.HTTP.Cookie
+import Network.HTTP.Utils (trim, split, crlf, Result, failParse)
 
 -- | The @Header@ data type pairs header names & values.
 data Header = Header HeaderName String
@@ -56,7 +58,7 @@ mkHeader :: HeaderName -> String -> Header
 mkHeader = Header
 
 instance Show Header where
-    show (Header key value) = shows key (':':' ':value ++ crlf)
+  show (Header key value) = shows key (':':' ':value ++ crlf)
 
 -- | HTTP @HeaderName@ type, a Haskell data constructor for each
 -- specification-defined header, prefixed with @Hdr@ and CamelCased,
@@ -98,6 +100,7 @@ data HeaderName
  | HdrReferer
  | HdrUserAgent
     -- Response Headers
+ | HdrAcceptRanges
  | HdrAge
  | HdrLocation
  | HdrProxyAuthenticate
@@ -127,263 +130,167 @@ data HeaderName
  | HdrContentTransferEncoding
     -- | Allows for unrecognised or experimental headers.
  | HdrCustom String -- not in header map below.
+ | HdrExtensionHeader
 
 instance Eq HeaderName where
-    HdrCustom a                == HdrCustom b                = (fmap toLower a) == (fmap toLower b)
+    HdrCustom a                == HdrCustom b                = map toLower a == map toLower b
     HdrCacheControl            == HdrCacheControl            = True
-    HdrCacheControl            == _                          = False
-    _                          == HdrCacheControl            = False
     HdrConnection              == HdrConnection              = True
-    HdrConnection              == _                          = False
-    _                          == HdrConnection              = False
     HdrDate                    == HdrDate                    = True
-    HdrDate                    == _                          = False
-    _                          == HdrDate                    = False
     HdrPragma                  == HdrPragma                  = True
-    HdrPragma                  == _                          = False
-    _                          == HdrPragma                  = False
     HdrTransferEncoding        == HdrTransferEncoding        = True
-    HdrTransferEncoding        == _                          = False
-    _                          == HdrTransferEncoding        = False
     HdrUpgrade                 == HdrUpgrade                 = True
-    HdrUpgrade                 == _                          = False
-    _                          == HdrUpgrade                 = False
     HdrVia                     == HdrVia                     = True
-    HdrVia                     == _                          = False
-    _                          == HdrVia                     = False
     HdrAccept                  == HdrAccept                  = True
-    HdrAccept                  == _                          = False
-    _                          == HdrAccept                  = False
     HdrAcceptCharset           == HdrAcceptCharset           = True
-    HdrAcceptCharset           == _                          = False
-    _                          == HdrAcceptCharset           = False
     HdrAcceptEncoding          == HdrAcceptEncoding          = True
-    HdrAcceptEncoding          == _                          = False
-    _                          == HdrAcceptEncoding          = False
     HdrAcceptLanguage          == HdrAcceptLanguage          = True
-    HdrAcceptLanguage          == _                          = False
-    _                          == HdrAcceptLanguage          = False
     HdrAuthorization           == HdrAuthorization           = True
-    HdrAuthorization           == _                          = False
-    _                          == HdrAuthorization           = False
     HdrCookie                  == HdrCookie                  = True
-    HdrCookie                  == _                          = False
-    _                          == HdrCookie                  = False
     HdrExpect                  == HdrExpect                  = True
-    HdrExpect                  == _                          = False
-    _                          == HdrExpect                  = False
     HdrFrom                    == HdrFrom                    = True
-    HdrFrom                    == _                          = False
-    _                          == HdrFrom                    = False
     HdrHost                    == HdrHost                    = True
-    HdrHost                    == _                          = False
-    _                          == HdrHost                    = False
     HdrIfModifiedSince         == HdrIfModifiedSince         = True
-    HdrIfModifiedSince         == _                          = False
-    _                          == HdrIfModifiedSince         = False
     HdrIfMatch                 == HdrIfMatch                 = True
-    HdrIfMatch                 == _                          = False
-    _                          == HdrIfMatch                 = False
     HdrIfNoneMatch             == HdrIfNoneMatch             = True
-    HdrIfNoneMatch             == _                          = False
-    _                          == HdrIfNoneMatch             = False
     HdrIfRange                 == HdrIfRange                 = True
-    HdrIfRange                 == _                          = False
-    _                          == HdrIfRange                 = False
     HdrIfUnmodifiedSince       == HdrIfUnmodifiedSince       = True
-    HdrIfUnmodifiedSince       == _                          = False
-    _                          == HdrIfUnmodifiedSince       = False
     HdrMaxForwards             == HdrMaxForwards             = True
-    HdrMaxForwards             == _                          = False
-    _                          == HdrMaxForwards             = False
     HdrProxyAuthorization      == HdrProxyAuthorization      = True
-    HdrProxyAuthorization      == _                          = False
-    _                          == HdrProxyAuthorization      = False
     HdrRange                   == HdrRange                   = True
-    HdrRange                   == _                          = False
-    _                          == HdrRange                   = False
     HdrReferer                 == HdrReferer                 = True
-    HdrReferer                 == _                          = False
-    _                          == HdrReferer                 = False
     HdrUserAgent               == HdrUserAgent               = True
-    HdrUserAgent               == _                          = False
-    _                          == HdrUserAgent               = False
+    HdrAcceptRanges            == HdrAcceptRanges            = True
     HdrAge                     == HdrAge                     = True
-    HdrAge                     == _                          = False
-    _                          == HdrAge                     = False
     HdrLocation                == HdrLocation                = True
-    HdrLocation                == _                          = False
-    _                          == HdrLocation                = False
     HdrProxyAuthenticate       == HdrProxyAuthenticate       = True
-    HdrProxyAuthenticate       == _                          = False
-    _                          == HdrProxyAuthenticate       = False
     HdrPublic                  == HdrPublic                  = True
-    HdrPublic                  == _                          = False
-    _                          == HdrPublic                  = False
     HdrRetryAfter              == HdrRetryAfter              = True
-    HdrRetryAfter              == _                          = False
-    _                          == HdrRetryAfter              = False
     HdrServer                  == HdrServer                  = True
-    HdrServer                  == _                          = False
-    _                          == HdrServer                  = False
     HdrSetCookie               == HdrSetCookie               = True
-    HdrSetCookie               == _                          = False
-    _                          == HdrSetCookie               = False
     HdrTE                      == HdrTE                      = True
-    HdrTE                      == _                          = False
-    _                          == HdrTE                      = False
     HdrTrailer                 == HdrTrailer                 = True
-    HdrTrailer                 == _                          = False
-    _                          == HdrTrailer                 = False
     HdrVary                    == HdrVary                    = True
-    HdrVary                    == _                          = False
-    _                          == HdrVary                    = False
     HdrWarning                 == HdrWarning                 = True
-    HdrWarning                 == _                          = False
-    _                          == HdrWarning                 = False
     HdrWWWAuthenticate         == HdrWWWAuthenticate         = True
-    HdrWWWAuthenticate         == _                          = False
-    _                          == HdrWWWAuthenticate         = False
     HdrAllow                   == HdrAllow                   = True
-    HdrAllow                   == _                          = False
-    _                          == HdrAllow                   = False
     HdrContentBase             == HdrContentBase             = True
-    HdrContentBase             == _                          = False
-    _                          == HdrContentBase             = False
     HdrContentEncoding         == HdrContentEncoding         = True
-    HdrContentEncoding         == _                          = False
-    _                          == HdrContentEncoding         = False
     HdrContentLanguage         == HdrContentLanguage         = True
-    HdrContentLanguage         == _                          = False
-    _                          == HdrContentLanguage         = False
     HdrContentLength           == HdrContentLength           = True
-    HdrContentLength           == _                          = False
-    _                          == HdrContentLength           = False
     HdrContentLocation         == HdrContentLocation         = True
-    HdrContentLocation         == _                          = False
-    _                          == HdrContentLocation         = False
     HdrContentMD5              == HdrContentMD5              = True
-    HdrContentMD5              == _                          = False
-    _                          == HdrContentMD5              = False
     HdrContentRange            == HdrContentRange            = True
-    HdrContentRange            == _                          = False
-    _                          == HdrContentRange            = False
     HdrContentType             == HdrContentType             = True
-    HdrContentType             == _                          = False
-    _                          == HdrContentType             = False
     HdrETag                    == HdrETag                    = True
-    HdrETag                    == _                          = False
-    _                          == HdrETag                    = False
     HdrExpires                 == HdrExpires                 = True
-    HdrExpires                 == _                          = False
-    _                          == HdrExpires                 = False
     HdrLastModified            == HdrLastModified            = True
-    HdrLastModified            == _                          = False
-    _                          == HdrLastModified            = False
     HdrContentTransferEncoding == HdrContentTransferEncoding = True
-    HdrContentTransferEncoding == _                          = False
-    _                          == HdrContentTransferEncoding = False
+    _                          == _                          = False
 
--- | @headerMap@ is a straight assoc list for translating between header names
--- and values.
-headerMap :: [ (String,HeaderName) ]
+
+-- | @headerMap@ is a straight assoc list for translating between 
+-- header names, variable names and Haskell values.
+headerMap :: [(String,String,HeaderName)]
 headerMap =
-   [ p "Cache-Control"        HdrCacheControl
-   , p "Connection"           HdrConnection
-   , p "Date"                 HdrDate
-   , p "Pragma"               HdrPragma
-   , p "Transfer-Encoding"    HdrTransferEncoding
-   , p "Upgrade"              HdrUpgrade
-   , p "Via"                  HdrVia
-   , p "Accept"               HdrAccept
-   , p "Accept-Charset"       HdrAcceptCharset
-   , p "Accept-Encoding"      HdrAcceptEncoding
-   , p "Accept-Language"      HdrAcceptLanguage
-   , p "Authorization"        HdrAuthorization
-   , p "Cookie"               HdrCookie
-   , p "Expect"               HdrExpect
-   , p "From"                 HdrFrom
-   , p "Host"                 HdrHost
-   , p "If-Modified-Since"    HdrIfModifiedSince
-   , p "If-Match"             HdrIfMatch
-   , p "If-None-Match"        HdrIfNoneMatch
-   , p "If-Range"             HdrIfRange
-   , p "If-Unmodified-Since"  HdrIfUnmodifiedSince
-   , p "Max-Forwards"         HdrMaxForwards
-   , p "Proxy-Authorization"  HdrProxyAuthorization
-   , p "Range"                HdrRange
-   , p "Referer"              HdrReferer
-   , p "User-Agent"           HdrUserAgent
-   , p "Age"                  HdrAge
-   , p "Location"             HdrLocation
-   , p "Proxy-Authenticate"   HdrProxyAuthenticate
-   , p "Public"               HdrPublic
-   , p "Retry-After"          HdrRetryAfter
-   , p "Server"               HdrServer
-   , p "Set-Cookie"           HdrSetCookie
-   , p "TE"                   HdrTE
-   , p "Trailer"              HdrTrailer
-   , p "Vary"                 HdrVary
-   , p "Warning"              HdrWarning
-   , p "WWW-Authenticate"     HdrWWWAuthenticate
-   , p "Allow"                HdrAllow
-   , p "Content-Base"         HdrContentBase
-   , p "Content-Encoding"     HdrContentEncoding
-   , p "Content-Language"     HdrContentLanguage
-   , p "Content-Length"       HdrContentLength
-   , p "Content-Location"     HdrContentLocation
-   , p "Content-MD5"          HdrContentMD5
-   , p "Content-Range"        HdrContentRange
-   , p "Content-Type"         HdrContentType
-   , p "ETag"                 HdrETag
-   , p "Expires"              HdrExpires
-   , p "Last-Modified"        HdrLastModified
-   , p "Content-Transfer-Encoding" HdrContentTransferEncoding
+   [ p "Cache-Control"             "HTTP_CACHE_CONTROL"             HdrCacheControl
+   , p "Connection"                "HTTP_CONNECTION"                HdrConnection
+   , p "Date"                      "HTTP_DATE"                      HdrDate
+   , p "Pragma"                    "HTTP_PRAGMA"                    HdrPragma
+   , p "Transfer-Encoding"         "HTTP_TRANSFER_ENCODING"         HdrTransferEncoding
+   , p "Upgrade"                   "HTTP_UPGRADE"                   HdrUpgrade
+   , p "Via"                       "HTTP_VIA"                       HdrVia
+   , p "Accept"                    "HTTP_ACCEPT"                    HdrAccept
+   , p "Accept-Charset"            "HTTP_ACCEPT_CHARSET"            HdrAcceptCharset
+   , p "Accept-Encoding"           "HTTP_ACCEPT_ENCODING"           HdrAcceptEncoding
+   , p "Accept-Language"           "HTTP_ACCEPT_LANGUAGE"           HdrAcceptLanguage
+   , p "Authorization"             "HTTP_AUTHORIZATION"             HdrAuthorization
+   , p "Cookie"                    "HTTP_COOKIE"                    HdrCookie
+   , p "Expect"                    "HTTP_EXPECT"                    HdrExpect
+   , p "From"                      "HTTP_FROM"                      HdrFrom
+   , p "Host"                      "HTTP_HOST"                      HdrHost
+   , p "If-Modified-Since"         "HTTP_IF_MODIFIED_SINCE"         HdrIfModifiedSince
+   , p "If-Match"                  "HTTP_IF_MATCH"                  HdrIfMatch
+   , p "If-None-Match"             "HTTP_IF_NONE_MATCH"             HdrIfNoneMatch
+   , p "If-Range"                  "HTTP_IF_RANGE"                  HdrIfRange
+   , p "If-Unmodified-Since"       "HTTP_IF_UNMODIFIED_SINCE"       HdrIfUnmodifiedSince
+   , p "Max-Forwards"              "HTTP_MAX_FORWARDS"              HdrMaxForwards
+   , p "Proxy-Authorization"       "HTTP_PROXY_AUTHORIZATION"       HdrProxyAuthorization
+   , p "Range"                     "HTTP_RANGE"                     HdrRange
+   , p "Referer"                   "HTTP_REFERER"                   HdrReferer
+   , p "TE"                        "HTTP_TE"                        HdrTE
+   , p "User-Agent"                "HTTP_USER_AGENT"                HdrUserAgent
+   , p "Accept-Ranges"             "HTTP_ACCEPT_RANGES"             HdrAcceptRanges
+   , p "Age"                       "HTTP_AGE"                       HdrAge
+   , p "ETag"                      "HTTP_ETAG"                      HdrETag
+   , p "Location"                  "HTTP_LOCATION"                  HdrLocation
+   , p "Proxy-Authenticate"        "HTTP_PROXY_AUTHENTICATE"        HdrProxyAuthenticate
+   , p "Public"                    "HTTP_PUBLIC"                    HdrPublic
+   , p "Retry-After"               "HTTP_RETRY_AFTER"               HdrRetryAfter
+   , p "Server"                    "HTTP_SERVER"                    HdrServer
+   , p "Set-Cookie"                "HTTP_SET_COOKIE"                HdrSetCookie
+   , p "Trailer"                   "HTTP_TRAILER"                   HdrTrailer
+   , p "Vary"                      "HTTP_VARY"                      HdrVary
+   , p "Warning"                   "HTTP_WARNING"                   HdrWarning
+   , p "WWW-Authenticate"          "HTTP_WWW_AUTHENTICATE"          HdrWWWAuthenticate
+   , p "Allow"                     "HTTP_ALLOW"                     HdrAllow
+   , p "Content-Base"              "HTTP_CONTENT_BASE"              HdrContentBase
+   , p "Content-Encoding"          "HTTP_CONTENT_ENCODING"          HdrContentEncoding
+   , p "Content-Language"          "HTTP_CONTENT_LANGUAGE"          HdrContentLanguage
+   , p "Content-Length"            "CONTENT_LENGTH"                 HdrContentLength
+   , p "Content-Location"          "HTTP_CONTENT_LOCATION"          HdrContentLocation
+   , p "Content-MD5"               "HTTP_CONTENT_MD5"               HdrContentMD5
+   , p "Content-Range"             "HTTP_CONTENT_RANGE"             HdrContentRange
+   , p "Content-Type"              "CONTENT_TYPE"                   HdrContentType
+   , p "Expires"                   "HTTP_EXPIRES"                   HdrExpires
+   , p "Last-Modified"             "HTTP_LAST_MODIFIED"             HdrLastModified
+   , p "Content-Transfer-Encoding" "HTTP_CONTENT_TRANSFER_ENCODING" HdrContentTransferEncoding
    ]
  where
-  p a b = (a,b)
+  p a b c = (a,b,c)
 
 instance Show HeaderName where
     show (HdrCustom s) = s
-    show x = case filter ((==x).snd) headerMap of
-                [] -> error "headerMap incomplete"
-                (h:_) -> fst h
+    show x = case filter (\(_,_,y)->x==y) headerMap of
+                []          -> error "headerMap incomplete"
+                ((h,_,_):_) -> h
 
 -- | @HasHeaders@ is a type class for types containing HTTP headers, allowing
 -- you to write overloaded header manipulation functions
 -- for both 'Request' and 'Response' data types, for instance.
 class HasHeaders x where
-    getHeaders :: x -> [Header]
-    setHeaders :: x -> [Header] -> x
+  getHeaders :: x -> [Header]
+  setHeaders :: x -> [Header] -> x
 
--- Header manipulation functions
+  getCookies :: x -> [Cookie]
+  setCookies :: x -> [Cookie] -> x
 
-type HeaderSetter a = HeaderName -> String -> a -> a
 
--- | @insertHeader hdr val x@ inserts a header with the given header name
--- and value. Does not check for existing headers with same name, allowing
--- duplicates to be introduce (use 'replaceHeader' if you want to avoid this.)
-insertHeader :: HasHeaders a => HeaderSetter a
-insertHeader name value x = setHeaders x newHeaders
-    where
-        newHeaders = (Header name value) : getHeaders x
+-- | @insertHeader hdr x@ inserts a header. Does not check for 
+-- existing headers with same name, allowing duplicates to be
+-- introduced (use 'replaceHeader' if you want to avoid this.)
+insertHeader :: HasHeaders a => HeaderName -> String -> a -> a
+insertHeader name value x = setHeaders x (Header name value : getHeaders x)
 
 -- | @insertHeaderIfMissing hdr val x@ adds the new header only if no previous
 -- header with name @hdr@ exists in @x@.
-insertHeaderIfMissing :: HasHeaders a => HeaderSetter a
-insertHeaderIfMissing name value x = setHeaders x (newHeaders $ getHeaders x)
-    where
-        newHeaders list@(h@(Header n _): rest)
-            | n == name  = list
-            | otherwise  = h : newHeaders rest
-        newHeaders [] = [Header name value]
+insertHeaderIfMissing :: HasHeaders a => HeaderName -> String -> a -> a
+insertHeaderIfMissing name value x = setHeaders x (update (getHeaders x))
+  where
+    update []     = [Header name value]
+    update list@(h@(Header n _) : rest)
+      | n == name = list
+      | otherwise = h : update rest
 
 -- | @replaceHeader hdr val o@ replaces the header @hdr@ with the
 -- value @val@, dropping any existing
-replaceHeader :: HasHeaders a => HeaderSetter a
-replaceHeader name value h = setHeaders h newHeaders
-    where
-        newHeaders = Header name value : [ x | x@(Header n _) <- getHeaders h, name /= n ]
+replaceHeader :: HasHeaders a => HeaderName -> String -> a -> a
+replaceHeader name value x = setHeaders x (update (getHeaders x))
+  where
+    update []     = [Header name value]
+    update (h@(Header n _) : rest)
+      | n == name = update rest
+      | otherwise = h : update rest
 
 -- | @insertHeaders hdrs x@ appends multiple headers to @x@'s existing
 -- set.
@@ -417,12 +324,32 @@ parseHeader str =
       Nothing -> failParse ("Unable to parse header: " ++ str)
       Just (k,v) -> return $ Header (fn k) (trim $ drop 1 v)
     where
-        fn k = case map snd $ filter (match k . fst) headerMap of
-                 [] -> (HdrCustom k)
-                 (h:_) -> h
+        fn x = case filter (\(y,_,_) -> match x y) headerMap of
+                 []          -> HdrCustom x
+                 ((_,_,h):_) -> h
 
         match :: String -> String -> Bool
         match s1 s2 = map toLower s1 == map toLower s2
+        
+variableToHeaderName :: String -> Maybe HeaderName
+variableToHeaderName x =
+  case filter (\(_,y,_) -> x==y) headerMap of
+    []          -> variableToHeader x
+    ((_,_,h):_) -> Just h
+  where
+    variableToHeader ('H':'T':'T':'P':'_':cs)
+      | null cs        = Nothing
+      | otherwise      = Just (HdrCustom (translate cs))
+    variableToHeader _ = Nothing
+
+    translate [] = []
+    translate cs = case break (=='_') cs of
+                     (first, '_':rest) -> titleCase first++'-':translate rest
+                     _                 -> cs
+
+    titleCase []     = []
+    titleCase (c:cs) = toUpper c : map toLower cs
+
 
 -- | @parseHeaders hdrs@ takes a sequence of strings holding header
 -- information and parses them into a set of headers (preserving their
@@ -456,3 +383,13 @@ parseHeaders = catRslts [] .
                 Left _ -> catRslts list t
                 Right v -> catRslts (v:list) t
         catRslts list [] = Right $ reverse list
+
+-- | @processCookieHeaders dom hdrs@
+headersToCookies :: String -> HeaderName -> [Header] -> ([String], [Cookie])
+headersToCookies dom hdr hdrs =
+  foldr (\(Header hdr' val) st ->
+             if hdr == hdr'
+               then parseCookies dom val st
+               else st)
+        ([],[])
+        hdrs
