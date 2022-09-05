@@ -28,13 +28,13 @@ module Network.HTTP.Utils
        , dropWhileTail -- :: (a -> Bool) -> [a] -> [a]
        , chopAtDelim   -- :: Eq a => a -> [a] -> ([a],[a])
        
-       , ConnError(..), Result
-       , fmapE, failMisc, failParse, failWith, responseParseError
+       , HttpError(..)
        ) where
 
 import Data.Char
 import Data.List ( elemIndex )
 import Data.Maybe ( fromMaybe )
+import Control.Exception
 
 -- | @crlf@ is our beloved two-char line terminator.
 crlf :: String
@@ -113,38 +113,14 @@ chopAtDelim elt xs =
     (_,[])    -> (xs,[])
     (as,_:bs) -> (as,bs)
 
-data ConnError
+data HttpError
  = ErrorReset
  | ErrorClosed
  | ErrorParse String
  | ErrorMisc String
    deriving(Show,Eq)
 
--- in GHC 7.0 the Monad instance for Error no longer
--- uses fail x = Left (strMsg x). failMisc is therefore
--- used instead.
-failMisc :: String -> Result a
-failMisc x = failWith (ErrorMisc x)
-
-failParse :: String -> Result a
-failParse x = failWith (ErrorParse x)
-
-failWith :: ConnError -> Result a
-failWith x = Left x
-
-fmapE :: (a -> Result b) -> IO (Result a) -> IO (Result b)
-fmapE f a = do
- x <- a
- case x of
-   Left  e -> return (Left e)
-   Right r -> return (f r)
-
--- | This is the type returned by many exported network functions.
-type Result a = Either ConnError   {- error  -}
-                       a           {- result -}
-
-responseParseError :: String -> String -> Result a
-responseParseError loc v = failWith (ErrorParse (loc ++ ' ':v))
+instance Exception HttpError
 
 parseInt :: String -> Maybe Int
 parseInt string =

@@ -42,7 +42,7 @@ module Network.HTTP.Headers
 
 import Data.Char (toLower,toUpper)
 import Network.HTTP.Cookie
-import Network.HTTP.Utils (trim, split, crlf, Result, failParse)
+import Network.HTTP.Utils (trim, split, crlf, HttpError(..))
 
 -- | The @Header@ data type pairs header names & values.
 data Header = Header HeaderName String
@@ -318,11 +318,11 @@ lookupHeader v (Header n s:t)
 
 -- | @parseHeader headerNameAndValueString@ tries to unscramble a
 -- @header: value@ pairing and returning it as a 'Header'.
-parseHeader :: String -> Result Header
+parseHeader :: String -> Maybe Header
 parseHeader str =
     case split ':' str of
-      Nothing -> failParse ("Unable to parse header: " ++ str)
-      Just (k,v) -> return $ Header (fn k) (trim $ drop 1 v)
+      Nothing    -> Nothing
+      Just (k,v) -> Just $ Header (fn k) (trim $ drop 1 v)
     where
         fn x = case filter (\(y,_,_) -> match x y) headerMap of
                  []          -> HdrCustom x
@@ -355,34 +355,29 @@ variableToHeaderName x =
 -- information and parses them into a set of headers (preserving their
 -- order in the input argument.) Handles header values split up over
 -- multiple lines.
-parseHeaders :: [String] -> Result [Header]
-parseHeaders = catRslts [] .
-                 map (parseHeader . clean) .
-                     joinExtended ""
-   where
-        -- Joins consecutive lines where the second line
-        -- begins with ' ' or '\t'.
-        joinExtended old      [] = [old]
-        joinExtended old (h : t)
-          | isLineExtension h    = joinExtended (old ++ ' ' : tail h) t
-          | otherwise            = old : joinExtended h t
+parseHeaders :: [String] -> Either HttpError [Header]
+parseHeaders = parseLines [] . joinExtended ""
+  where
+    -- Joins consecutive lines where the second line
+    -- begins with ' ' or '\t'.
+    joinExtended old []      = [old]
+    joinExtended old (h : t)
+      | isLineExtension h    = joinExtended (old ++ ' ' : tail h) t
+      | otherwise            = old : joinExtended h t
 
-        isLineExtension (x:_) = x == ' ' || x == '\t'
-        isLineExtension _ = False
+    isLineExtension (x:_) = x == ' ' || x == '\t'
+    isLineExtension _ = False
 
-        clean [] = []
-        clean (h:t) | h `elem` "\t\r\n" = ' ' : clean t
-                    | otherwise = h : clean t
+    clean [] = []
+    clean (h:t) | h `elem` "\t\r\n" = ' ' : clean t
+                | otherwise = h : clean t
 
-        -- tolerant of errors?  should parse
-        -- errors here be reported or ignored?
-        -- currently ignored.
-        catRslts :: [a] -> [Result a] -> Result [a]
-        catRslts list (h:t) =
-            case h of
-                Left _ -> catRslts list t
-                Right v -> catRslts (v:list) t
-        catRslts list [] = Right $ reverse list
+    parseLines :: [Header] -> [String] -> Either HttpError [Header]
+    parseLines hdrs []     = Right (reverse hdrs)
+    parseLines hdrs (l:ls) =
+      case (parseHeader . clean) l of
+        Just hdr -> parseLines (hdr:hdrs) ls
+        Nothing  -> Left (ErrorParse ("Unable to parse header: " ++ l))
 
 -- | @processCookieHeaders dom hdrs@
 headersToCookies :: String -> HeaderName -> [Header] -> ([String], [Cookie])

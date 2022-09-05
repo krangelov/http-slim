@@ -31,6 +31,8 @@ module Network.HTTP.Base
        , parseResponseHead
        , parseRequestHead
        , parseRequestMethod
+       
+       , HttpError(..)
 
        , ResponseNextStep(..)
        , matchResponse
@@ -83,8 +85,7 @@ import Data.Maybe    ( listToMaybe, fromMaybe )
 import Network.HTTP.Headers
 import Network.HTTP.Cookie ( renderCookies )
 import Network.HTTP.Utils ( trim, crlf, sp, 
-                            ConnError(..), Result, failWith, readsOne,
-                            responseParseError )
+                            HttpError(..), readsOne )
 import qualified Network.HTTP.Base64 as Base64 (encode)
 
 import Text.Read.Lex (readDecP)
@@ -303,12 +304,12 @@ setRequestBody req (typ, body) = req' { rqBody=body }
 -----------------------------------------------------------------
 
 -- Parsing a request
-parseRequestHead :: [String] -> Result RequestData
+parseRequestHead :: [String] -> Either HttpError RequestData
 parseRequestHead         [] = Left ErrorClosed
-parseRequestHead (com:hdrs) = do
-  (version,rqm,uri) <- parseCommand com (words com)
-  hdrs'             <- parseHeaders hdrs
-  return (rqm,uri,withVersion version hdrs')
+parseRequestHead (s:ss) = do
+  (version,rqm,uri) <- parseCommand s (words s)
+  hdrs              <- parseHeaders ss
+  return (rqm,uri,withVersion version hdrs)
   where
     parseCommand l (rqm:uri:version:_) =
       case (parseURIReference uri, lookup rqm rqMethodMap) of
@@ -316,16 +317,15 @@ parseRequestHead (com:hdrs) = do
         (Just u, Nothing) -> return (version,Custom rqm,u)
         _                 -> parse_err l
     parseCommand l _
-      | null l    = failWith ErrorClosed
+      | null l    = Left ErrorClosed
       | otherwise = parse_err l
 
-    parse_err l = responseParseError "parseRequestHead"
-                     ("Request command line parse failure: " ++ l)
+    parse_err l = Left (ErrorParse ("Request command line parse failure: " ++ l))
 
 
 -- Parsing a response
-parseResponseHead :: [String] -> Result ResponseData
-parseResponseHead []         = failWith ErrorClosed
+parseResponseHead :: [String] -> Either HttpError ResponseData
+parseResponseHead []         = Left ErrorClosed
 parseResponseHead (sts:hdrs) = do
   (version,code,reason)  <- responseStatus sts (words sts)
   hdrs'                  <- parseHeaders hdrs
@@ -334,13 +334,10 @@ parseResponseHead (sts:hdrs) = do
   responseStatus _l _yes@(version:code:reason) =
     return (version,match code,concatMap (++" ") reason)
   responseStatus l _no
-    | null l    = failWith ErrorClosed  -- an assumption
+    | null l    = Left ErrorClosed  -- an assumption
     | otherwise = parse_err l
 
-  parse_err l =
-    responseParseError
-        "parseResponseHead"
-        ("Response status line parse failure: " ++ l)
+  parse_err l = Left (ErrorParse ("Response status line parse failure: " ++ l))
 
   match [a,b,c] = (digitToInt a,
                    digitToInt b,

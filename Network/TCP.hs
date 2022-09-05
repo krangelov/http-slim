@@ -35,12 +35,13 @@ import Network.Socket
    , addrSocketType, addrAddress
    )
 import qualified Network.Socket as Socket ( sendBuf, recvBuf, close )
-import Network.HTTP.Utils ( ConnError(..), Result, failMisc, failWith )
+import Network.HTTP.Utils ( HttpError(..) )
 
 import qualified OpenSSL.Session as SSL
 
 import Control.Concurrent
-import Control.Exception ( IOException, bracketOnError, try, catch, bracket )
+import Control.Exception ( IOException, bracketOnError,
+                           try, catch, bracket, throwIO )
 import Control.Monad ( when )
 import Data.Char  ( ord, toLower )
 import Foreign
@@ -67,7 +68,7 @@ data Conn
           }
  | ConnClosed
 
-readBlock :: Connection -> Int -> IO (Result String)
+readBlock :: Connection -> Int -> IO String
 readBlock ref n =
   onNonClosedDo ref $ \conn ->
     catch (case connEncoding conn of
@@ -77,11 +78,11 @@ readBlock ref n =
           (\e ->  if isEOFError e
                     then do
                       when (connCloseEOF conn) $ catch (closeQuick ref) (\(_ :: IOException) -> return ())
-                      return (conn,return "")
-                    else return (conn,failMisc (show e)))
+                      return (conn,"")
+                    else throwIO e)
   where
     fetch decoder conn n
-      | n <= 0    = return (conn,Right [])
+      | n <= 0    = return (conn,[])
       | otherwise = do
           let bbuf = connByteBuf conn
               cbuf = connCharBuf conn
@@ -98,7 +99,7 @@ readBlock ref n =
                                   let conn' = conn{connByteBuf=bbuf'
                                                   ,connCharBuf=cbuf'
                                                   }
-                                  return (conn',Right [])
+                                  return (conn',[])
             _               -> do let len = bufferElems cbuf_
                                   s1 <- withBuffer cbuf_ (peekArray len)
                                   bbuf' <- slideContents bbuf_
@@ -106,14 +107,12 @@ readBlock ref n =
                                       conn' = conn{connByteBuf=bbuf'
                                                   ,connCharBuf=cbuf'
                                                   }
-                                  (conn,rest) <- fetch decoder conn' (n-(bufferElems bbuf-bufferElems bbuf'))
-                                  case rest of
-                                    Right s2 -> return (conn,Right (s1++s2))
-                                    _        -> return (conn,rest)
+                                  (conn,s2) <- fetch decoder conn' (n-(bufferElems bbuf-bufferElems bbuf'))
+                                  return (conn,s1++s2)
 
-readLine :: Connection -> IO (Result String)
+readLine :: Connection -> IO String
 readLine ref =
-  onNonClosedDo ref $ \conn -> do
+  onNonClosedDo ref $ \conn ->
     catch (case connEncoding conn of
              TextEncoding{mkTextDecoder=mkDecoder} -> do
                 bracket mkDecoder Enc.close $ \decoder ->
@@ -122,8 +121,8 @@ readLine ref =
              if isEOFError e
                then do
                  when (connCloseEOF conn) $ catch (closeQuick ref) (\(_ :: IOException) -> return ())
-                 return (conn,return "")
-               else return (conn,failMisc (show e)))
+                 return (conn,"")
+               else throwIO e)
   where
     fetch decoder conn = do
       let bbuf = connByteBuf conn
@@ -143,9 +142,9 @@ readLine ref =
                               let conn' = conn{connByteBuf=bbuf'
                                               ,connCharBuf=cbuf'
                                               }
-                              return (conn', Right [])
+                              return (conn', [])
         _ | isEmptyBuffer cbuf_
-                        -> return (conn,Right [])
+                        -> return (conn, [])
           | otherwise   -> do let len = bufferElems cbuf_
                               s1 <- withBuffer cbuf_ (peekArray len)
                               bbuf' <- if bufR bbufNL == bufR bbuf
@@ -157,11 +156,9 @@ readLine ref =
                                               ,connCharBuf=cbuf'
                                               }
                               if nl
-                                then return (conn',Right s1)
-                                else do (conn,rest) <- fetch decoder conn'
-                                        case rest of
-                                          Right s2 -> return (conn,Right (s1++s2))
-                                          _        -> return (conn,rest)
+                                then return (conn', s1)
+                                else do (conn,s2) <- fetch decoder conn'
+                                        return (conn,s1++s2)
 
     scanNL i bbuf
       | i > bufR bbuf = return (bbuf, False)
@@ -174,20 +171,18 @@ readLine ref =
 
 -- The 'Connection' object allows no outward buffering,
 -- since in general messages are serialised in their entirety.
-writeBlock :: Connection -> String -> IO (Result ())
+writeBlock :: Connection -> String -> IO ()
 writeBlock ref s =
-  onNonClosedDo ref $ \conn -> do
-    catch (case connEncoding conn of
-             TextEncoding{mkTextEncoder=mkEncoder} -> do
-                bracket mkEncoder Enc.close $ \encoder ->
-                  send encoder conn s)
-          (\(e :: IOException) -> return (conn,failMisc (show e)))
+  onNonClosedDo ref $ \conn ->
+    case connEncoding conn of
+      TextEncoding{mkTextEncoder=mkEncoder} ->
+         bracket mkEncoder Enc.close $ \encoder -> send encoder conn s
   where
     send encoder conn cs =
       let bbuf = connByteBuf conn
           cbuf = connCharBuf conn
       in if isEmptyBuffer cbuf && null cs
-           then return (conn,Right ())
+           then return (conn,())
            else do (cbuf,cs) <- pokeElems cbuf cs
                    (_,cbuf',bbuf_) <- encode encoder cbuf bbuf
                    let n = bufferElems bbuf_
@@ -355,14 +350,14 @@ isTCPConnectedTo conn host port = do
 closeIt :: Connection -> (String -> Bool) -> Bool -> IO ()
 closeIt c p b = do
    closeConnection c (if b
-                      then readLine c >>= \x -> case x of { Right xs -> return (p xs); _ -> return True}
+                      then catch (fmap p (readLine c)) (\(e :: HttpError) -> return True)
                       else return True)
 
 closeEOF :: Connection -> Bool -> IO ()
 closeEOF c flg = modifyMVar_ (getRef c) (\co -> return co{connCloseEOF=flg})
 
-onNonClosedDo :: Connection -> (Conn -> IO (Conn, Result b)) -> IO (Result b)
+onNonClosedDo :: Connection -> (Conn -> IO (Conn, b)) -> IO b
 onNonClosedDo c act = modifyMVar (getRef c) $ \conn -> do
   case conn of
-    ConnClosed -> do return (conn, failWith ErrorClosed)
-    _          -> do act conn
+    ConnClosed -> throwIO ErrorClosed
+    _          -> act conn

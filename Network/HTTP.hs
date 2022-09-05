@@ -15,7 +15,8 @@
 -- a URL and return it as a String:
 --
 -- >
--- >    simpleHTTP (getRequest "http://www.haskell.org/") >>= fmap (take 100) . getResponseBody
+-- >    do rsp <- simpleHTTP (getRequest "http://www.haskell.org/")
+-- >       return (rspBody rsp)
 -- >        -- fetch document and return it (as a 'String'.)
 --
 -- Other functions let you control the submission and transfer of HTTP
@@ -48,8 +49,8 @@ module Network.HTTP
        , module Network.HTTP.Headers
 
        -- ** High-level API
-       , simpleHTTP       -- :: Request -> IO (Result Response)
-       , simpleHTTP_      -- :: Connection -> Request -> IO (Result Response)
+       , simpleHTTP       -- :: Request -> IO Response
+       , simpleHTTP_      -- :: Connection -> Request -> IO Response
        , simpleServer     -- :: SockAddr -> (Request -> IO Response) -> IO ()
        , simpleServerBind -- :: Int -> HostAddress -> (Request -> IO Response) -> IO ()
 
@@ -59,9 +60,9 @@ module Network.HTTP
        , outputText
 
        -- ** Low-level API
-       , sendHTTP         -- :: Connection -> Request -> IO (Result Response)
-       , sendHTTP_notify  -- :: Connection -> Request -> IO () -> IO (Result Response)
-       , S.receiveHTTP    -- :: Connection -> IO (Result Request)
+       , sendHTTP         -- :: Connection -> Request -> IO Response
+       , sendHTTP_notify  -- :: Connection -> Request -> IO () -> IO Response
+       , S.receiveHTTP    -- :: Connection -> IO Request
        , S.respondHTTP    -- :: Connection -> Response -> IO ()
 
        , module Network.TCP
@@ -70,11 +71,7 @@ module Network.HTTP
        , getRequest          -- :: String -> Request
        , headRequest         -- :: String -> Request
        , postRequest         -- :: String -> Request
-       , postRequestWithBody -- :: String -> String -> String -> Request_String
-
-       -- ** Handle responses
-       , getResponseBody  -- :: Result Request -> IO ty
-       , getResponseCode  -- :: Result Request -> IO ResponseCode
+       , postRequestWithBody -- :: String -> String -> String -> Request
        ) where
 
 -----------------------------------------------------------------
@@ -83,7 +80,7 @@ module Network.HTTP
 
 import Network.HTTP.Headers
 import Network.HTTP.Base
-import Network.HTTP.Utils ( crlf, Result )
+import Network.HTTP.Utils ( crlf )
 import qualified Network.HTTP.HandleStream as S ( sendHTTP, sendHTTP_notify,
                                                   receiveHTTP, respondHTTP )
 import Network.TCP
@@ -101,7 +98,7 @@ import Network.Socket (
 import qualified OpenSSL.Session as SSL
 
 import Control.Concurrent (forkIO)
-import Control.Exception (finally)
+import Control.Exception (finally,bracket)
 
 import Numeric (showHex)
 import Data.Maybe (isJust)
@@ -114,7 +111,7 @@ iNADDR_ANY = Socket.tupleToHostAddress (0,0,0,0)
 
 -- | @simpleHTTP req@ transmits the 'Request' @req@ by opening a /direct/, non-persistent
 -- connection to the HTTP server that @req@ is destined for, followed by transmitting
--- it and gathering up the response as a 'Result'. Prior to sending the request,
+-- it and gathering up the 'Response'. Prior to sending the request,
 -- it is normalized (via 'normalizeRequest'). If you have to mediate the request
 -- via an HTTP proxy, you will have to normalize the request yourself. Or switch to
 -- using 'Network.Browser' instead.
@@ -124,7 +121,7 @@ iNADDR_ANY = Socket.tupleToHostAddress (0,0,0,0)
 -- > simpleHTTP (getRequest "http://hackage.haskell.org/")
 -- > simpleHTTP (getRequest "http://hackage.haskell.org:8012/")
 
-simpleHTTP :: Request -> IO (Result Response)
+simpleHTTP :: Request -> IO Response
 simpleHTTP r = do
   auth <- getAuth r
   ctxt <- getSSLContext (rqURI r)
@@ -135,7 +132,7 @@ simpleHTTP r = do
   S.sendHTTP c norm_r
 
 -- | Identical to 'simpleHTTP', but acting on an already opened stream.
-simpleHTTP_ :: Connection -> Request -> IO (Result Response)
+simpleHTTP_ :: Connection -> Request -> IO Response
 simpleHTTP_ c r = do
   let norm_r = normalizeRequest defaultNormalizeRequestOptions{normDoClose=True} r
   S.sendHTTP c norm_r
@@ -143,7 +140,7 @@ simpleHTTP_ c r = do
 -- | @sendHTTP hStream httpRequest@ transmits @httpRequest@ (after normalization) over
 -- @hStream@, but does not alter the status of the connection, nor request it to be
 -- closed upon receiving the response.
-sendHTTP :: Connection -> Request -> IO (Result Response)
+sendHTTP :: Connection -> Request -> IO Response
 sendHTTP conn rq = do
   let norm_r = normalizeRequest defaultNormalizeRequestOptions rq
   S.sendHTTP conn norm_r
@@ -155,7 +152,7 @@ sendHTTP conn rq = do
 sendHTTP_notify :: Connection
                 -> Request
                 -> IO ()
-                -> IO (Result Response)
+                -> IO Response
 sendHTTP_notify conn rq onSendComplete = do
   let norm_r = normalizeRequest defaultNormalizeRequestOptions rq
   S.sendHTTP_notify conn norm_r onSendComplete
@@ -210,20 +207,6 @@ postRequestWithBody urlString typ body =
     Nothing -> error ("postRequestWithBody: Not a valid URL - " ++ urlString)
     Just u  -> setRequestBody (mkRequest POST u) (typ, body)
 
--- | @getResponseBody response@ takes the response of a HTTP requesting action and
--- tries to extricate the body of the 'Response' @response@. If the request action
--- returned an error, an IO exception is raised.
-getResponseBody :: Result Response -> IO String
-getResponseBody (Left err) = fail (show err)
-getResponseBody (Right r)  = return (rspBody r)
-
--- | @getResponseCode response@ takes the response of a HTTP requesting action and
--- tries to extricate the status code of the 'Response' @response@. If the request action
--- returned an error, an IO exception is raised.
-getResponseCode :: Result Response -> IO ResponseCode
-getResponseCode (Left err) = fail (show err)
-getResponseCode (Right r)  = return (rspCode r)
-
 
 simpleServer
    :: Maybe Int                      -- ^ http  port
@@ -275,15 +258,14 @@ simpleServerMain sockaddr mkSSL callOut = do
 
   loopIO (do (acceptedSock,_) <- Socket.accept sock
              mb_ssl <- mkSSL acceptedSock
-             stream <- socketConnection "localhost" (fromIntegral num) acceptedSock mb_ssl
-             forkIO $ do 
-               ereq <- S.receiveHTTP stream
-               case ereq of
-                 Right req -> do resp <- callOut req
-                                 S.respondHTTP stream resp
-                 _         -> return ()
-               close stream
-         ) `finally` Socket.close sock
+             
+             forkIO $
+               bracket (socketConnection "localhost" (fromIntegral num) acceptedSock mb_ssl)
+                       (close)
+                       (\stream -> do req <- S.receiveHTTP stream
+                                      resp <- callOut req
+                                      S.respondHTTP stream resp)
+         ) `finally` (Socket.close sock)
   where
     loopIO m = m >> loopIO m
 

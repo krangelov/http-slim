@@ -76,6 +76,7 @@ flag network-bsd
 
 Library
   Exposed-modules:
+                 Network.TCP,
                  Network.HTTP,
                  Network.HTTP.Headers,
                  Network.HTTP.Base,
@@ -86,7 +87,6 @@ Library
                  Network.Browser,
                  Network.FastCGI
   Other-modules:
-                 Network.TCP,
                  Network.HTTP.Base64,
                  Network.HTTP.MD5Aux,
                  Network.HTTP.Utils
