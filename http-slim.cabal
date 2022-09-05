@@ -52,11 +52,6 @@ Source-Repository head
   type: git
   location: https://github.com/haskell/HTTP.git
 
-Flag warn-as-error
-  default:     False
-  description: Build with warnings-as-errors
-  manual:      True
-
 Flag conduit10
   description: Use version 1.0.x or below of the conduit package (for the test suite)
   default: False
@@ -91,7 +86,7 @@ Library
                  Network.HTTP.MD5Aux,
                  Network.HTTP.Utils
                  Paths_http_slim
-  GHC-options: -fwarn-missing-signatures -Wall
+  GHC-options: -fwarn-missing-signatures
 
   -- note the test harness constraints should be kept in sync with these
   -- where dependencies are shared
@@ -122,9 +117,6 @@ Library
                     network >= 2.7
   else
      build-depends: network < 2.7
-
-  if flag(warn-as-error)
-    ghc-options:      -Werror
 
   if os(windows)
     Build-depends: Win32 >= 2.2.0.0 && < 2.14

@@ -925,7 +925,7 @@ dorequest auth rqst = do
         dorequest2 c rqst
   case rsp of
     Response a b c _ ->
-      reportEvent (ResponseEnd (a,b,c)) (show (rqURI rqst)) ; _ -> return ()
+      reportEvent (ResponseEnd (a,b,c)) (show (rqURI rqst))
   return rsp
  where
   dorequest2 c r = do
