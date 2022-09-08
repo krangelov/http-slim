@@ -302,9 +302,9 @@ type Query = [(String,String)]
 -- | Decode application/x-www-form-urlencoded
 rqQuery :: Request -> Query
 rqQuery rq =
-  case qparse of
-    [(q,"")] -> q
-    _        -> []
+  case [q | (q,"") <- qparse] of
+    [q] -> q
+    _   -> []
   where
     qparse =
       case rqMethod rq of
