@@ -28,7 +28,7 @@ module Network.FastCGI
          ) where
 
 import Control.Concurrent
-import Control.Exception ( bracket )
+import Control.Exception ( bracket, catch )
 import Data.Bits
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Internal as BS ( ByteString(..) )
@@ -206,6 +206,8 @@ requestLoop state handler = do
                    forkIO $ do
                      rsp <- handler (prqEnv prq)
                                     (prqReq prq){rqBody=concat (reverse (prqBody prq))}
+                            `catch`
+                            handleErrors (fLog state requestID)
                      sendResponse state requestID rsp
                      sendRecord state $ Record {
                        recordType = EndRequestRecord,

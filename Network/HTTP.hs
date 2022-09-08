@@ -98,7 +98,7 @@ import Network.Socket (
 import qualified OpenSSL.Session as SSL
 
 import Control.Concurrent (forkIO)
-import Control.Exception (finally,bracket)
+import Control.Exception (finally,bracket,catch)
 
 import Numeric (showHex)
 import Data.Maybe (isJust)
@@ -263,7 +263,7 @@ simpleServerMain sockaddr mkSSL callOut = do
                bracket (socketConnection "localhost" (fromIntegral num) acceptedSock mb_ssl)
                        (close)
                        (\stream -> do req <- S.receiveHTTP stream
-                                      resp <- callOut req
+                                      resp <- callOut req `catch` handleErrors putStrLn
                                       S.respondHTTP stream resp)
          ) `finally` (Socket.close sock)
   where

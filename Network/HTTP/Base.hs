@@ -66,6 +66,8 @@ module Network.HTTP.Base
        , setResponseVersion
 
        , getSSLContext
+       
+       , handleErrors
 
        ) where
 
@@ -76,6 +78,7 @@ import Network.URI
    )
 
 import Control.Monad ( guard )
+import Control.Exception ( SomeException )
 
 import Data.Word     ( Word8 )
 import Data.Char     ( digitToInt, intToDigit, toLower, isDigit )
@@ -629,3 +632,13 @@ getSSLContext uri =
 --
 defaultServer :: String
 defaultServer = "haskell-http-slim/" ++ httpPackageVersion
+
+handleErrors :: (String -> IO ()) -> SomeException -> IO Response
+handleErrors logIt e = do
+  logIt (show e)
+  return (Response
+            { rspCode = (5,0,0)
+            , rspReason = "Internal Server Error"
+            , rspHeaders = []
+            , rspBody = ""
+            })
