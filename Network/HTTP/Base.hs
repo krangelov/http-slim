@@ -52,6 +52,8 @@ module Network.HTTP.Base
        , uriAuthPort
        , findConnClose
 
+       , rqQuery, Query(..)
+
        , defaultGETRequest
        , mkRequest
        , setRequestBody
@@ -81,10 +83,11 @@ import Control.Monad ( guard )
 import Control.Exception ( SomeException )
 
 import Data.Word     ( Word8 )
-import Data.Char     ( digitToInt, intToDigit, toLower, isDigit )
+import Data.Char     ( chr, digitToInt, intToDigit, toLower, isDigit, isHexDigit )
 import Data.List     ( find )
 import Data.Maybe    ( listToMaybe, fromMaybe )
 
+import Network.URI ( uriQuery )
 import Network.HTTP.Headers
 import Network.HTTP.Cookie ( renderCookies )
 import Network.HTTP.Utils ( trim, crlf, sp, 
@@ -93,7 +96,7 @@ import qualified Network.HTTP.Base64 as Base64 (encode)
 
 import Text.Read.Lex (readDecP)
 import Text.ParserCombinators.ReadP
-   ( ReadP, readP_to_S, char, (<++), look, munch, munch1 )
+   ( ReadP, readP_to_S, char, (<++), look, munch, munch1, sepBy )
 
 import qualified Paths_http_slim as Self (version)
 import Data.Version (showVersion)
@@ -293,6 +296,40 @@ mkRequest meth uri = req
                            ]
             , rqMethod   = meth
             }
+
+type Query = [(String,String)]
+
+-- | Decode application/x-www-form-urlencoded
+rqQuery :: Request -> Query
+rqQuery rq =
+  case qparse of
+    [(q,"")] -> q
+    _        -> []
+  where
+    qparse =
+      case rqMethod rq of
+        POST -> readP_to_S pQuery (rqBody rq)
+        _    -> readP_to_S (char '?' >> pQuery) (uriQuery (rqURI rq))
+
+    pQuery = sepBy param (char '&')
+    param = do
+      var <- munch (\c -> c /= '=' && c /= '&')
+      char '='
+      val <- munch (\c -> c /= '&')
+      return (decode var,decode val)
+
+    -- | Decode "+" and hexadecimal escapes
+    decode [] = []
+    decode ('%':'u':d1:d2:d3:d4:cs)
+      | all isHexDigit [d1,d2,d3,d4] = chr(fromhex4 d1 d2 d3 d4):decode cs
+    decode ('%':d1:d2:cs)
+      | all isHexDigit [d1,d2] = chr(fromhex2 d1 d2):decode cs
+    decode ('+':cs) = ' ':decode cs
+    decode (c:cs) = c:decode cs
+
+    fromhex4 d1 d2 d3 d4 = 256*fromhex2 d1 d2+fromhex2 d3 d4
+    fromhex2 d1 d2 = 16*digitToInt d1+digitToInt d2
+
 
 -- set rqBody, Content-Type and Content-Length headers.
 setRequestBody :: Request -> (String, String) -> Request
