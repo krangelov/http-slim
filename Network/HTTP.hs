@@ -297,7 +297,7 @@ outputChunked chunkSize resp@(Response{rspBody=body}) =
 outputHTML :: String -> IO Response
 outputHTML html =
   return (Response
-            { rspCode = (2,0,0)
+            { rspCode = 200
             , rspReason = "OK"
             , rspHeaders = [Header HdrServer defaultServer
                            ,Header HdrContentType "text/html"
@@ -309,7 +309,7 @@ outputHTML html =
 outputText :: String -> IO Response
 outputText text =
   return (Response
-            { rspCode = (2,0,0)
+            { rspCode = 200
             , rspReason = "OK"
             , rspHeaders = [Header HdrServer defaultServer
                            ,Header HdrContentType "text/plain; charset=UTF8"

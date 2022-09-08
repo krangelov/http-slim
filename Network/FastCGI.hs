@@ -561,8 +561,7 @@ sendString state requestID enc s = do
 
 sendResponse :: FastCGIState -> Int -> Response -> IO ()
 sendResponse state requestID rsp = do
-  let status  = let (a,b,c) = rspCode rsp
-                in map intToDigit [a,b,c]
+  let status  = show (rspCode rsp)
       headers = rspHeaders rsp
       body    = rspBody rsp
       nameValuePairs = ("Status", status) :

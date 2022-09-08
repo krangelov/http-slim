@@ -216,7 +216,7 @@ instance HasHeaders Request where
 
 -- | For easy pattern matching, HTTP response codes @xyz@ are
 -- represented as @(x,y,z)@.
-type ResponseCode  = (Int,Int,Int)
+type ResponseCode  = Int
 
 -- | @ResponseData@ contains the head of a response payload;
 -- HTTP response code, accompanying text description + header
@@ -242,8 +242,8 @@ data Response =
 -- This is an invalid representation of a received response,
 -- since we have made the assumption that all responses are HTTP/1.1
 instance Show Response where
-  show rsp@(Response (a,b,c) reason headers _) =
-    ver ++ ' ' : map intToDigit [a,b,c] ++ ' ' : reason ++ crlf ++
+  show rsp@(Response code reason headers _) =
+    ver ++ ' ' : show code ++ ' ' : reason ++ crlf ++
     foldr (++) [] (map show (dropHttpVersion headers)) ++ crlf
     where
       ver = fromMaybe httpVersion (getResponseVersion rsp)
@@ -332,7 +332,7 @@ parseResponseHead []         = Left ErrorClosed
 parseResponseHead (sts:hdrs) = do
   (version,code,reason)  <- responseStatus sts (words sts)
   hdrs'                  <- parseHeaders hdrs
-  return (code,reason, withVersion version hdrs')
+  return (code,reason,withVersion version hdrs')
  where
   responseStatus _l _yes@(version:code:reason) =
     return (version,match code,concatMap (++" ") reason)
@@ -342,10 +342,10 @@ parseResponseHead (sts:hdrs) = do
 
   parse_err l = Left (ErrorParse ("Response status line parse failure: " ++ l))
 
-  match [a,b,c] = (digitToInt a,
-                   digitToInt b,
-                   digitToInt c)
-  match _ = (-1,-1,-1)  -- will create appropriate behaviour
+  match s =
+    case reads s of
+      [(code,"")] -> code
+      _           -> -1 -- will create appropriate behaviour
 
 -- To avoid changing the @RequestData@ and @ResponseData@ types
 -- just for this (and the upstream backwards compat. woes that
@@ -420,25 +420,21 @@ data ResponseNextStep
  | DieHorribly String
 
 matchResponse :: RequestMethod -> ResponseCode -> ResponseNextStep
-matchResponse rqst rsp =
-    case rsp of
-        (1,0,0) -> Continue
-        (1,0,1) -> Done        -- upgrade to TLS
-        (1,_,_) -> Continue    -- default
-        (2,0,4) -> Done
-        (2,0,5) -> Done
-        (2,_,_) -> ans
-        (3,0,4) -> Done
-        (3,0,5) -> Done
-        (3,_,_) -> ans
-        (4,1,7) -> Retry       -- Expectation failed
-        (4,_,_) -> ans
-        (5,_,_) -> ans
-        (a,b,c) -> DieHorribly ("Response code " ++ map intToDigit [a,b,c] ++ " not recognised")
+matchResponse rqst code =
+    case code of
+      100 -> Continue
+      101 -> Done        -- upgrade to TLS
+      _ | code > 101 && code < 200 -> Continue    -- default
+      204 -> Done
+      205 -> Done
+      304 -> Done
+      305 -> Done
+      417 -> Retry       -- Expectation failed
+      _ | code >= 200 && code < 600 -> ans
+      _   -> DieHorribly ("Response code " ++ show code ++ " not recognised")
     where
-        ans | rqst == HEAD = Done
-            | otherwise    = ExpectEntity
-
+      ans | rqst == HEAD = Done
+          | otherwise    = ExpectEntity
 
 
 -----------------------------------------------------------------
@@ -637,7 +633,7 @@ handleErrors :: (String -> IO ()) -> SomeException -> IO Response
 handleErrors logIt e = do
   logIt (show e)
   return (Response
-            { rspCode = (5,0,0)
+            { rspCode = 500
             , rspReason = "Internal Server Error"
             , rspHeaders = []
             , rspBody = ""

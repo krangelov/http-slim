@@ -785,7 +785,7 @@ request' nullVal rqState rq = do
           handleConnectionClose auth (retrieveHeaders HdrConnection rsp)
           mbMxAuths <- getMaxAuthAttempts
           case rspCode rsp of
-           (4,0,1) -- Credentials not sent or refused.
+           401 -- Credentials not sent or refused.
              | reqDenies rqState > fromMaybe defaultMaxAuthAttempts mbMxAuths -> do
                  out "401 - credentials again refused; exceeded retry count (2)"
                  return (uri,rsp)
@@ -811,7 +811,7 @@ request' nullVal rqState rq = do
                                          }
                                   (insertHeader HdrAuthorization (withAuthority au' rq) rq)
 
-           (4,0,7)  -- Proxy Authentication required
+           407  -- Proxy Authentication required
              | reqDenies rqState > fromMaybe defaultMaxAuthAttempts mbMxAuths -> do
                  out "407 - proxy authentication required; max deny count exceeeded (2)"
                  return (uri,rsp)
@@ -840,8 +840,8 @@ request' nullVal rqState rq = do
                                              }
                                       rq
 
-           (3,0,x) | x `elem` [2,3,1,7]  ->  do
-             out ("30" ++ show x ++  " - redirect")
+           code | code `elem` [301,302,303,307]  ->  do
+             out (show code ++  " - redirect")
              allow_redirs <- allowRedirect rqState
              case allow_redirs of
                False -> return (uri,rsp)
@@ -862,7 +862,7 @@ request' nullVal rqState rq = do
 
                                    -- Redirect using GET request method, depending on
                                    -- response code.
-                                   let toGet = x `elem` [2,3]
+                                   let toGet = code `elem` [302,303]
                                        method = if toGet then GET else rqMethod rq
                                        rq1 = rq { rqMethod=method, rqURI=newURI_abs }
                                        rq2 = if toGet then replaceHeader HdrContentLength "0" (rq1 {rqBody = nullVal}) else rq1
@@ -876,7 +876,7 @@ request' nullVal rqState rq = do
                               where
                                 newURI_abs = uriDefaultTo newURI uri
 
-           (3,0,5) ->
+           305 ->
              case retrieveHeaders HdrLocation rsp of
                [] -> do err "No Location header in proxy redirect response."
                         return (uri,rsp)
