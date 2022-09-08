@@ -363,9 +363,10 @@ parseHeaders = parseLines [] . joinExtended ""
   where
     -- Joins consecutive lines where the second line
     -- begins with ' ' or '\t'.
-    joinExtended old []      = [old]
+    joinExtended old []      = [old | not (null old)]
     joinExtended old (h : t)
       | isLineExtension h    = joinExtended (old ++ ' ' : tail h) t
+      | null old             =       joinExtended h t
       | otherwise            = old : joinExtended h t
 
     isLineExtension (x:_) = x == ' ' || x == '\t'

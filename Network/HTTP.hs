@@ -258,7 +258,7 @@ simpleServerMain sockaddr mkSSL callOut = do
 
   loopIO (do (acceptedSock,_) <- Socket.accept sock
              mb_ssl <- mkSSL acceptedSock
-             
+
              forkIO $
                bracket (socketConnection "localhost" (fromIntegral num) acceptedSock mb_ssl)
                        (close)

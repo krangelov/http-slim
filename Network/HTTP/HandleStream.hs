@@ -315,5 +315,5 @@ readTillEmpty2 :: Connection
 readTillEmpty2 conn list = do
   s <- readLine conn
   if s == crlf || s == lf || null s
-    then return (reverse (s:list))
+    then return (reverse list)
     else readTillEmpty2 conn (s:list)
