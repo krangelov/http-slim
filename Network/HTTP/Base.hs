@@ -345,7 +345,7 @@ setRequestBody req (typ, body) = req' { rqBody=body }
 
 -- Parsing a request
 parseRequestHead :: [String] -> Either HttpError RequestData
-parseRequestHead         [] = Left ErrorClosed
+parseRequestHead []     = Left ErrorClosed
 parseRequestHead (s:ss) = do
   (version,rqm,uri) <- parseCommand s (words s)
   hdrs              <- parseHeaders ss
