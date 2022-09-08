@@ -113,6 +113,7 @@ data HeaderName
  | HdrVary
  | HdrWarning
  | HdrWWWAuthenticate
+ | HdrAccessControlAllowOrigin
     -- Entity Headers
  | HdrAllow
  | HdrContentBase
@@ -173,6 +174,7 @@ instance Eq HeaderName where
     HdrVary                    == HdrVary                    = True
     HdrWarning                 == HdrWarning                 = True
     HdrWWWAuthenticate         == HdrWWWAuthenticate         = True
+    HdrAccessControlAllowOrigin== HdrAccessControlAllowOrigin= True
     HdrAllow                   == HdrAllow                   = True
     HdrContentBase             == HdrContentBase             = True
     HdrContentEncoding         == HdrContentEncoding         = True
@@ -233,6 +235,7 @@ headerMap =
    , p "Vary"                      "HTTP_VARY"                      HdrVary
    , p "Warning"                   "HTTP_WARNING"                   HdrWarning
    , p "WWW-Authenticate"          "HTTP_WWW_AUTHENTICATE"          HdrWWWAuthenticate
+   , p "Access-Control-Allow-Origin" "HTTP_ACCESS_CONTROL_ALLOW_ORIGIN" HdrAccessControlAllowOrigin
    , p "Allow"                     "HTTP_ALLOW"                     HdrAllow
    , p "Content-Base"              "HTTP_CONTENT_BASE"              HdrContentBase
    , p "Content-Encoding"          "HTTP_CONTENT_ENCODING"          HdrContentEncoding
