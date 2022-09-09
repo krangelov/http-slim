@@ -58,6 +58,7 @@ module Network.HTTP
        , outputChunked
        , outputHTML
        , outputText
+       , httpError
 
        -- ** Low-level API
        , sendHTTP         -- :: Connection -> Request -> IO Response
@@ -98,7 +99,7 @@ import Network.Socket (
 import qualified OpenSSL.Session as SSL
 
 import Control.Concurrent (forkIO)
-import Control.Exception (finally,bracket,catch)
+import Control.Exception (finally,bracket,catch,throw)
 
 import Numeric (showHex)
 import Data.Maybe (isJust)
@@ -262,9 +263,9 @@ simpleServerMain sockaddr mkSSL callOut = do
              forkIO $
                bracket (socketConnection "localhost" (fromIntegral num) acceptedSock mb_ssl)
                        (close)
-                       (\stream -> do req <- S.receiveHTTP stream
-                                      resp <- callOut req `catch` handleErrors putStrLn
-                                      S.respondHTTP stream resp)
+                       (\stream -> handleErrors putStrLn
+                                      (S.receiveHTTP stream >>= callOut) >>=
+                                   S.respondHTTP stream)
          ) `finally` (Socket.close sock)
   where
     loopIO m = m >> loopIO m
@@ -317,6 +318,9 @@ outputText text =
                            ]
             , rspBody = text
             })
+
+httpError :: ResponseCode -> String -> String -> IO a
+httpError code reason body = throw (ErrorMisc code reason body)
 
 --
 -- * TODO

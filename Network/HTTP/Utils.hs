@@ -117,7 +117,7 @@ data HttpError
  = ErrorReset
  | ErrorClosed
  | ErrorParse String
- | ErrorMisc String
+ | ErrorMisc Int String String
    deriving(Show,Eq)
 
 instance Exception HttpError

@@ -204,10 +204,9 @@ requestLoop state handler = do
             Just prq
               | BS.length (recordContent record) == 0 -> do
                    forkIO $ do
-                     rsp <- handler (prqEnv prq)
-                                    (prqReq prq){rqBody=concat (reverse (prqBody prq))}
-                            `catch`
-                            handleErrors (fLog state requestID)
+                     rsp <- handleErrors (fLog state requestID)
+                               (handler (prqEnv prq)
+                                        (prqReq prq){rqBody=concat (reverse (prqBody prq))})
                      sendResponse state requestID rsp
                      sendRecord state $ Record {
                        recordType = EndRequestRecord,

@@ -80,7 +80,7 @@ import Network.URI
    )
 
 import Control.Monad ( guard )
-import Control.Exception ( SomeException )
+import Control.Exception ( SomeException, catch )
 
 import Data.Word     ( Word8 )
 import Data.Char     ( chr, digitToInt, intToDigit, toLower, isDigit, isHexDigit )
@@ -666,12 +666,20 @@ getSSLContext uri =
 defaultServer :: String
 defaultServer = "haskell-http-slim/" ++ httpPackageVersion
 
-handleErrors :: (String -> IO ()) -> SomeException -> IO Response
-handleErrors logIt e = do
-  logIt (show e)
-  return (Response
-            { rspCode = 500
-            , rspReason = "Internal Server Error"
-            , rspHeaders = []
-            , rspBody = ""
-            })
+handleErrors :: (String -> IO ()) -> IO Response -> IO Response
+handleErrors logIt f = 
+  f `catch` (\e -> case e of
+                     ErrorReset                 -> outputError 400 "Bad Request" ""
+                     ErrorClosed                -> outputError 400 "Bad Request" ""
+                     ErrorParse msg             -> outputError 400 "Bad Request" msg
+                     ErrorMisc code reason body -> outputError code reason body)
+    `catch` (\(e :: SomeException) -> do logIt (show e)
+                                         outputError 500 "Internal Server Error" "")
+  where
+    outputError code reason body =
+      return (Response
+                { rspCode = code
+                , rspReason = reason
+                , rspHeaders = []
+                , rspBody = body
+                })
