@@ -30,17 +30,18 @@ module Network.HTTP.HandleStream
 
 import Network.URI ( uriRegName )
 import Network.TCP ( Connection, openTCPConnection, close, closeOnEnd,
-                     readBlock, readLine, writeBlock, setEncoding )
+                     readBlock, readLine, writeAscii, writeBlock )
 
 import Network.HTTP.Base
 import Network.HTTP.Headers
-import Network.HTTP.Utils ( trim, readsOne, crlf, lf, HttpError(..) )
+import Network.HTTP.Utils ( trim, readsOne, crlf, lf, HttpError(..), encodeString )
 
 import Data.Char (toLower)
-import Control.Exception (onException, throwIO)
+import Control.Exception (onException, throwIO, bracket)
 import Control.Monad (when)
 import Numeric       ( readHex )
-import System.IO ( mkTextEncoding, latin1 )
+import System.IO ( TextEncoding, latin1 )
+import qualified Data.ByteString.Lazy as LBS
 
 -----------------------------------------------------------------
 ------------------ Misc -----------------------------------------
@@ -96,14 +97,14 @@ sendMain :: Connection
          -> (IO ())
          -> IO Response
 sendMain conn rqst onSendComplete = do
-  -- TODO review throwing away of result
-  _ <- writeBlock conn (show rqst)
-  setupCharset conn (rqHeaders rqst)
-  _ <- writeBlock conn (rqBody rqst)
-  setEncoding conn latin1
+  enc <- getEncoding (rqHeaders rqst)
+  lbs <- encodeString enc (rqBody rqst)
+  let rqst' = insertHeader HdrContentLength (show (LBS.length lbs)) rqst
+  _ <- writeAscii conn (show rqst')
+  _ <- writeBlock conn lbs
   onSendComplete
   rsp <- getResponseHead conn
-  switchResponse conn True False rsp rqst
+  switchResponse conn True False rsp rqst'
 
    -- Hmmm, this could go bad if we keep getting "100 Continue"
    -- responses...  Except this should never happen according
@@ -119,7 +120,7 @@ switchResponse conn allow_retry bdy_sent (cd,rn,hdrs) rqst =
    case matchResponse (rqMethod rqst) cd of
      Continue
       | not bdy_sent -> do {- Time to send the body -}
-        writeBlock conn (rqBody rqst) >>=
+        writeAscii conn (rqBody rqst) >>=
            (\ _ -> do
               rsp <- getResponseHead conn
               switchResponse conn allow_retry True rsp rqst)
@@ -131,7 +132,7 @@ switchResponse conn allow_retry bdy_sent (cd,rn,hdrs) rqst =
                     Trouble is the request contains Expects
                     other than "100-Continue" -}
         -- TODO review throwing away of result
-        _ <- writeBlock conn (show rqst ++ rqBody rqst)
+        _ <- writeAscii conn (show rqst ++ rqBody rqst)
         rsp <- getResponseHead conn
         switchResponse conn False bdy_sent rsp rqst
 
@@ -144,21 +145,20 @@ switchResponse conn allow_retry bdy_sent (cd,rn,hdrs) rqst =
        close conn
        throwIO (ErrorParse str)
      ExpectEntity -> do
-       setupCharset conn hdrs
+       enc <- getEncoding hdrs
        (ftrs,bdy) <- 
            onException
-             (maybe (maybe (hopefulTransfer conn [])
-                           (\x -> readsOne (linearTransfer conn)
+             (maybe (maybe (hopefulTransfer conn enc [])
+                           (\x -> readsOne (linearTransfer conn enc)
                                            (throwIO (ErrorParse ("unrecognized content-length value"++x)))
                                            x)
                            cl)
-                    (ifChunked (chunkedTransfer conn)
+                    (ifChunked (chunkedTransfer conn enc)
                                (uglyDeathTransfer "sendHTTP"))
                     tc)
              (close conn)
        let hs  = hdrs++ftrs
            rsp = Response cd rn hs bdy
-       setEncoding conn latin1
        when (findConnClose hs)
             (closeOnEnd conn True)
        return rsp
@@ -166,22 +166,10 @@ switchResponse conn allow_retry bdy_sent (cd,rn,hdrs) rqst =
        tc = lookupHeader HdrTransferEncoding hdrs
        cl = lookupHeader HdrContentLength hdrs
 
-setupCharset :: Connection -> [Header] -> IO ()
-setupCharset conn hdrs =
-  case lookupHeader HdrContentType hdrs of
-    Just val -> case dropWhile (/=';') val of
-                  (';':cs) -> case break (=='=') cs of
-                                (xs,'=':ys) | trim (map toLower xs) == "charset" ->
-                                     do enc <- mkTextEncoding (trim ys++"//IGNORE")
-                                        setEncoding conn enc
-                                _ -> return ()
-                  _        -> return ()
-    Nothing  -> return ()
-
 -- reads and parses headers
 getResponseHead :: Connection -> IO ResponseData
 getResponseHead conn = do
-   strs <- readTillEmpty1 conn
+   strs <- readTillEmpty1 conn latin1
    case parseResponseHead strs of
      Left err -> throwIO err
      Right rd -> return rd
@@ -193,23 +181,22 @@ receiveHTTP conn = getRequestHead >>= processRequest
     -- reads and parses headers
    getRequestHead :: IO RequestData
    getRequestHead = do
-     strs <- readTillEmpty1 conn
+     strs <- readTillEmpty1 conn latin1
      case parseRequestHead strs of
        Left err -> throwIO err
        Right rq -> return rq
 
    processRequest (rm,uri,hdrs) = do
-     setupCharset conn hdrs
+     enc <- getEncoding hdrs
      (ftrs,bdy) <- maybe
                      (maybe (return ([], ""))
-                            (\x -> readsOne (linearTransfer conn)
+                            (\x -> readsOne (linearTransfer conn enc)
                                             (throwIO (ErrorParse ("unrecognized Content-Length value"++x)))
                                             x)
                             cl)
-                     (ifChunked (chunkedTransfer conn)
+                     (ifChunked (chunkedTransfer conn enc)
                                 (uglyDeathTransfer "receiveHTTP"))
                      tc
-     setEncoding conn latin1
      return (Request uri rm (hdrs++ftrs) bdy)
      where
         -- FIXME : Also handle 100-continue.
@@ -221,14 +208,11 @@ receiveHTTP conn = getRequestHead >>= processRequest
 -- server interactions, performing the dual role to 'sendHTTP'.
 respondHTTP :: Connection -> Response -> IO ()
 respondHTTP conn rsp = do
-  -- TODO: review throwing away of result
-  _ <- writeBlock conn (show rsp)
-   -- write body immediately, don't wait for 100 CONTINUE
-  -- TODO: review throwing away of result
-  setupCharset conn (rspHeaders rsp)
-  _ <- writeBlock conn (rspBody rsp)
-  setEncoding conn latin1
-  return ()
+  enc <- getEncoding (rspHeaders rsp)
+  bs <- encodeString enc (rspBody rsp)
+  let rsp' = normalizeResponse (Just (LBS.length bs)) rsp
+  _ <- writeAscii conn (show rsp')
+  writeBlock conn bs
 
 ------------------------------------------------------------------------------
 
@@ -242,9 +226,9 @@ ifChunked a b s =
     _ -> b
 
 -- | Used when we know exactly how many bytes to expect.
-linearTransfer :: Connection -> Int -> IO ([Header],String)
-linearTransfer conn n = do
-  str <- readBlock conn n
+linearTransfer :: Connection -> TextEncoding -> Int -> IO ([Header],String)
+linearTransfer conn enc n = do
+  str <- readBlock conn enc n
   return ([],str)
 
 -- | Used when nothing about data is known,
@@ -252,42 +236,45 @@ linearTransfer conn n = do
 --   causes bad behaviour.  Here we just
 --   take data once and give up the rest.
 hopefulTransfer :: Connection
+                -> TextEncoding
                 -> [String]
                 -> IO ([Header],String)
-hopefulTransfer conn strs = do
-  more <- readLine conn
+hopefulTransfer conn enc strs = do
+  more <- readLine conn enc
   if null more
     then return ([], concat $ reverse strs)
-    else hopefulTransfer conn (more:strs)
+    else hopefulTransfer conn enc (more:strs)
 
 -- | A necessary feature of HTTP\/1.1
 --   Also the only transfer variety likely to
 --   return any footers.
 chunkedTransfer :: Connection
+                -> TextEncoding
                 -> IO ([Header], String)
-chunkedTransfer conn = chunkedTransferC conn [] 0
+chunkedTransfer conn enc = chunkedTransferC conn enc [] 0
 
 chunkedTransferC :: Connection
+                 -> TextEncoding
                  -> [String]
                  -> Int
                  -> IO ([Header], String)
-chunkedTransferC conn acc n = do
-  line <- readLine conn
+chunkedTransferC conn enc acc n = do
+  line <- readLine conn enc
   let size | null line = 0
            | otherwise =
                case readHex line of
                  (hx,_):_ -> hx
                  _        -> 0
   if size == 0
-    then do strs <- readTillEmpty2 conn []
+    then do strs <- readTillEmpty2 conn enc []
             case parseHeaders strs of
               Left err   -> throwIO err
               Right ftrs -> do -- insert (computed) Content-Length header.
                                let ftrs' = Header HdrContentLength (show n) : ftrs
                                return (ftrs',concat (reverse acc))
-    else do cdata <- readBlock conn size
-            _     <- readLine conn
-            chunkedTransferC conn (cdata:acc) (n+size)
+    else do cdata <- readBlock conn enc size
+            _     <- readLine conn enc
+            chunkedTransferC conn enc (cdata:acc) (n+size)
 
 -- | Maybe in the future we will have a sensible thing
 --   to do here, at that time we might want to change
@@ -297,12 +284,12 @@ uglyDeathTransfer loc = throwIO (ErrorParse ("Unknown Transfer-Encoding in "++lo
 
 
 -- | Remove leading crlfs then call readTillEmpty2 (not required by RFC)
-readTillEmpty1 :: Connection -> IO [String]
-readTillEmpty1 conn = do
-  s <- readLine conn
+readTillEmpty1 :: Connection -> TextEncoding -> IO [String]
+readTillEmpty1 conn enc = do
+  s <- readLine conn enc
   if s == crlf || s == lf
-    then readTillEmpty1 conn
-    else readTillEmpty2 conn [s]
+    then readTillEmpty1 conn enc
+    else readTillEmpty2 conn enc [s]
 
 -- | Read lines until an empty line (CRLF),
 --   also accepts a connection close as end of
@@ -310,10 +297,11 @@ readTillEmpty1 conn = do
 --   thing to do - so probably indicates an
 --   error condition.
 readTillEmpty2 :: Connection
+               -> TextEncoding
                -> [String]
                -> IO [String]
-readTillEmpty2 conn list = do
-  s <- readLine conn
+readTillEmpty2 conn enc list = do
+  s <- readLine conn enc
   if s == crlf || s == lf || null s
     then return (reverse list)
-    else readTillEmpty2 conn (s:list)
+    else readTillEmpty2 conn enc (s:list)

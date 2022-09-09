@@ -31,7 +31,7 @@ import Control.Concurrent
 import Control.Exception ( bracket, catch )
 import Data.Bits
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Internal as BS ( ByteString(..) )
+import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Char8 as BSC (unpack, pack)
 import Data.Char
 import Data.Maybe ( fromMaybe )
@@ -43,11 +43,8 @@ import Network.URI ( URI(..), nullURI
                    , parseURIReference )
 import Network.HTTP.Base
 import Network.HTTP.Headers
-import Network.HTTP.Utils ( parseInt, trim )
-import Foreign ( peekArray, pokeElemOff )
-import GHC.IO.Buffer
-import GHC.IO.Encoding ( TextEncoding(..), latin1, mkTextEncoding, encode )
-import qualified GHC.IO.Encoding as Enc
+import Network.HTTP.Utils ( parseInt, trim, encodeString, decodeString )
+import System.IO ( TextEncoding, latin1 )
 
 -- | An opaque type representing the state of a single connection from the web server.
 data FastCGIState = FastCGIState {
@@ -267,19 +264,6 @@ processRequestVariable name value prq =
     Nothing     -> prq{prqEnv=(name,value) : prqEnv prq}
     Just header -> prq{prqReq=insertHeader header value (prqReq prq)}
 
-
-getEncoding :: [Header] -> IO TextEncoding
-getEncoding hdrs =
-  case lookupHeader HdrContentType hdrs of
-    Just val -> case dropWhile (/=';') val of
-                  (';':cs) -> case break (=='=') cs of
-                                (xs,'=':ys) | trim (map toLower xs) == "charset" ->
-                                     do enc <- mkTextEncoding (trim ys++"//IGNORE")
-                                        return enc
-                                _ -> return latin1
-                  _        -> return latin1
-    Nothing  -> return latin1
-
 recvRecord :: FastCGIState -> IO (Maybe Record)
 recvRecord state = do
   byteString <- recvAll (fcgiSocket state) 8
@@ -391,23 +375,6 @@ fLog state requestID message
       }
   | otherwise = return ()
 
-
-decodeString enc bs = 
-  case bs of
-    BS.PS fptr offs len -> do
-      let bbuf = Buffer {
-                   bufRaw   = fptr,
-                   bufState = ReadBuffer,
-                   bufSize  = offs+len,
-                   bufL = offs,
-                   bufR = offs+len
-                 }
-      cbuf <- newCharBuffer len WriteBuffer
-      case enc of
-        TextEncoding{mkTextDecoder=mkDecoder} ->
-          bracket mkDecoder Enc.close $ \decoder -> do
-                  (_,bbuf_,cbuf_) <- encode decoder bbuf cbuf
-                  withBuffer cbuf_ (peekArray (bufferElems cbuf_))
 
 -- | Return the document root, as provided by the web server, if it was provided.
 getDocumentRoot :: Env -> Maybe String
@@ -526,43 +493,24 @@ sendBuffer state requestID buffer = do
     then sendBuffer state requestID bufferRemaining
     else return ()
 
-sendString :: FastCGIState -> Int -> TextEncoding -> String -> IO ()
-sendString state requestID enc s = do
-  cbuf <- newCharBuffer max_len ReadBuffer
-  case enc of
-    TextEncoding{mkTextEncoder=mkEncoder} -> do
-      bracket mkEncoder Enc.close $ \encoder ->
-        send encoder cbuf s
+sendBody :: FastCGIState -> Int -> LBS.ByteString -> IO ()
+sendBody state requestID lbs =
+  mapM_ send (LBS.toChunks lbs)
   where
-    max_len = 256
-
-    send encoder cbuf cs
-      | isEmptyBuffer cbuf && null cs = return ()
-      | otherwise = do (cbuf,cs) <- pokeElems cbuf cs
-                       bbuf <- newByteBuffer max_len WriteBuffer
-                       (_,cbuf',bbuf') <- encode encoder cbuf bbuf
-                       let bs  = BS.PS (bufRaw bbuf')
-                                       (bufL bbuf')
-                                       (bufferElems bbuf')
-                       sendRecord state $ Record {
-                         recordType = StdoutRecord,
-                         recordRequestID = requestID,
-                         recordContent = bs
-                       }
-                       send encoder cbuf' cs
-      where
-        pokeElems cbuf cs
-          | null cs || isFullCharBuffer cbuf = return (cbuf,cs)
-        pokeElems cbuf (c:cs)  = do
-          withBuffer cbuf $ \ptr ->
-            pokeElemOff ptr (bufR cbuf) c
-          pokeElems (bufferAdd 1 cbuf) cs    
+    send bs =
+      sendRecord state $ Record {
+         recordType = StdoutRecord,
+         recordRequestID = requestID,
+         recordContent = bs
+      }
 
 sendResponse :: FastCGIState -> Int -> Response -> IO ()
 sendResponse state requestID rsp = do
-  let status  = show (rspCode rsp)
-      headers = rspHeaders rsp
-      body    = rspBody rsp
+  enc <- getEncoding (rspHeaders rsp)
+  bs <- encodeString enc (rspBody rsp)
+  let rsp' = normalizeResponse (Just (LBS.length bs)) rsp
+      status  = show (rspCode rsp')
+      headers = rspHeaders rsp'
       nameValuePairs = ("Status", status) :
                        map (\(Header hdr val) -> (show hdr,val))
                            headers
@@ -571,6 +519,5 @@ sendResponse state requestID rsp = do
                 nameValuePairs
             ++ [BSC.pack "\r\n"]
       buffer = foldl BS.append BS.empty bytestrings
-  enc <- getEncoding (rspHeaders rsp)
   sendBuffer state requestID buffer
-  sendString state requestID enc body
+  sendBody state requestID bs

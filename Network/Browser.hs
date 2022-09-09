@@ -592,10 +592,8 @@ setUserAgent :: String -> BrowserAction ()
 setUserAgent ua = modify (\b -> b{bsUserAgent=Just ua})
 
 -- | @getUserAgent@ returns the current @User-Agent:@ default string.
-getUserAgent :: BrowserAction String
-getUserAgent  = do
-  n <- gets bsUserAgent
-  return (maybe defaultUserAgent id n)
+getUserAgent :: BrowserAction (Maybe String)
+getUserAgent  = gets bsUserAgent
 
 -- | @RequestState@ is an internal tallying type keeping track of various
 -- per-connection counters, like the number of authorization attempts and

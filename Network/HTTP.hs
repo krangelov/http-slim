@@ -54,7 +54,6 @@ module Network.HTTP
        , simpleServer     -- :: SockAddr -> (Request -> IO Response) -> IO ()
        , simpleServerBind -- :: Int -> HostAddress -> (Request -> IO Response) -> IO ()
 
-       , output
        , outputChunked
        , outputHTML
        , outputText
@@ -72,7 +71,6 @@ module Network.HTTP
        , getRequest          -- :: String -> Request
        , headRequest         -- :: String -> Request
        , postRequest         -- :: String -> Request
-       , postRequestWithBody -- :: String -> String -> String -> Request
        ) where
 
 -----------------------------------------------------------------
@@ -99,7 +97,7 @@ import Network.Socket (
 import qualified OpenSSL.Session as SSL
 
 import Control.Concurrent (forkIO)
-import Control.Exception (finally,bracket,catch,throw)
+import Control.Exception (finally,bracket,catch,throwIO)
 
 import Numeric (showHex)
 import Data.Maybe (isJust)
@@ -191,24 +189,6 @@ postRequest urlString =
     Nothing -> error ("postRequest: Not a valid URL - " ++ urlString)
     Just u  -> mkRequest POST u
 
--- | A convenience constructor for a POST 'Request'.
---
--- It constructs a request and sets the body as well as
--- the Content-Type and Content-Length headers. The contents of the body
--- are forced to calculate the value for the Content-Length header.
---
--- If the URL isn\'t syntactically valid, the function raises an error.
-postRequestWithBody
-    :: String                      -- ^URL to POST to
-    -> String                      -- ^Content-Type of body
-    -> String                      -- ^The body of the request
-    -> Request                     -- ^The constructed request
-postRequestWithBody urlString typ body =
-  case parseURI urlString of
-    Nothing -> error ("postRequestWithBody: Not a valid URL - " ++ urlString)
-    Just u  -> setRequestBody (mkRequest POST u) (typ, body)
-
-
 simpleServer
    :: Maybe Int                      -- ^ http  port
    -> Maybe (Int,FilePath,FilePath)  -- ^ https port,private and public keys
@@ -270,11 +250,6 @@ simpleServerMain sockaddr mkSSL callOut = do
   where
     loopIO m = m >> loopIO m
 
-{- | return the respons with the content-length added -}
-output :: Response -> IO Response
-output resp@(Response{rspBody=body}) =
-  return (insertHeaderIfMissing HdrContentLength (show (length body)) resp)
-
 outputChunked :: Int -> Response -> IO Response
 outputChunked chunkSize resp@(Response{rspBody=body}) =
   return resp{rspHeaders = rspHeaders resp ++ [chunkedHdr]
@@ -300,10 +275,7 @@ outputHTML html =
   return (Response
             { rspCode = 200
             , rspReason = "OK"
-            , rspHeaders = [Header HdrServer defaultServer
-                           ,Header HdrContentType "text/html"
-                           ,Header HdrContentLength (show (length html))
-                           ]
+            , rspHeaders = [Header HdrContentType "text/html"]
             , rspBody = html
             })
 
@@ -312,15 +284,12 @@ outputText text =
   return (Response
             { rspCode = 200
             , rspReason = "OK"
-            , rspHeaders = [Header HdrServer defaultServer
-                           ,Header HdrContentType "text/plain; charset=UTF8"
-                           ,Header HdrContentLength (show (length text))
-                           ]
+            , rspHeaders = [Header HdrContentType "text/plain; charset=UTF8"]
             , rspBody = text
             })
 
 httpError :: ResponseCode -> String -> String -> IO a
-httpError code reason body = throw (ErrorMisc code reason body)
+httpError code reason body = throwIO (ErrorMisc code reason body)
 
 --
 -- * TODO

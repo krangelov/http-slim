@@ -27,7 +27,10 @@ module Network.HTTP.Utils
 
        , dropWhileTail -- :: (a -> Bool) -> [a] -> [a]
        , chopAtDelim   -- :: Eq a => a -> [a] -> ([a],[a])
-       
+
+       , decodeString
+       , encodeString
+
        , HttpError(..)
        ) where
 
@@ -35,6 +38,12 @@ import Data.Char
 import Data.List ( elemIndex )
 import Data.Maybe ( fromMaybe )
 import Control.Exception
+import GHC.IO.Buffer
+import GHC.IO.Encoding ( TextEncoding(..), latin1, mkTextEncoding, encode )
+import qualified GHC.IO.Encoding as Enc
+import qualified Data.ByteString.Internal as BS ( ByteString(..) )
+import qualified Data.ByteString.Lazy as LBS
+import Foreign ( peekArray, pokeElemOff )
 
 -- | @crlf@ is our beloved two-char line terminator.
 crlf :: String
@@ -127,3 +136,50 @@ parseInt string =
   case reads string of
     [(n,"")] -> Just n
     _        -> Nothing
+
+
+encodeString :: TextEncoding -> String -> IO LBS.ByteString
+encodeString enc s = do
+  cbuf <- newCharBuffer max_len ReadBuffer
+  case enc of
+    TextEncoding{mkTextEncoder=mkEncoder} ->
+      bracket mkEncoder Enc.close $ \encoder -> do
+        bss <- convert encoder cbuf s []
+        return (LBS.fromChunks (reverse bss))
+  where
+    max_len = 256
+
+    convert encoder cbuf cs bss
+      | isEmptyBuffer cbuf && null cs = return bss
+      | otherwise = do (cbuf,cs) <- pokeElems cbuf cs
+                       bbuf <- newByteBuffer max_len WriteBuffer
+                       (_,cbuf',bbuf') <- encode encoder cbuf bbuf
+                       let bs = BS.PS (bufRaw bbuf')
+                                      (bufL bbuf')
+                                      (bufferElems bbuf')
+                       convert encoder cbuf' cs (bs:bss)
+      where
+        pokeElems cbuf cs
+          | null cs || isFullCharBuffer cbuf = return (cbuf,cs)
+        pokeElems cbuf (c:cs)  = do
+          withBuffer cbuf $ \ptr ->
+            pokeElemOff ptr (bufR cbuf) c
+          pokeElems (bufferAdd 1 cbuf) cs    
+
+decodeString :: TextEncoding -> BS.ByteString -> IO String
+decodeString enc bs = 
+  case bs of
+    BS.PS fptr offs len -> do
+      let bbuf = Buffer {
+                   bufRaw   = fptr,
+                   bufState = ReadBuffer,
+                   bufSize  = offs+len,
+                   bufL = offs,
+                   bufR = offs+len
+                 }
+      cbuf <- newCharBuffer len WriteBuffer
+      case enc of
+        TextEncoding{mkTextDecoder=mkDecoder} ->
+          bracket mkDecoder Enc.close $ \decoder -> do
+                  (_,bbuf_,cbuf_) <- encode decoder bbuf cbuf
+                  withBuffer cbuf_ (peekArray (bufferElems cbuf_))

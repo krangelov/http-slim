@@ -17,10 +17,10 @@ module Network.TCP
    ( Connection
    , openTCPConnection
    , socketConnection
-   , setEncoding, getEncoding
    , isTCPConnectedTo
    , readBlock
    , readLine
+   , writeAscii
    , writeBlock
    , close, closeOnEnd
    ) where
@@ -46,6 +46,8 @@ import Control.Monad ( when )
 import Data.Char  ( ord, toLower )
 import Foreign
 import System.IO.Error ( isEOFError )
+import qualified Data.ByteString.Internal as BS ( ByteString(..), c2w )
+import qualified Data.ByteString.Lazy as LBS
 import GHC.IO.Buffer
 import GHC.IO.Encoding hiding ( close )
 import qualified GHC.IO.Encoding as Enc
@@ -61,17 +63,16 @@ data Conn
           , connSSL       :: Maybe SSL.SSL
           , connByteBuf   :: Buffer Word8
           , connCharBuf   :: Buffer Char
-          , connEncoding  :: TextEncoding
           , connHost      :: String
           , connPort      :: Int
           , connCloseEOF  :: Bool -- True => close socket upon reaching end-of-stream.
           }
  | ConnClosed
 
-readBlock :: Connection -> Int -> IO String
-readBlock ref n =
+readBlock :: Connection -> TextEncoding -> Int -> IO String
+readBlock ref enc n =
   onNonClosedDo ref $ \conn ->
-    catch (case connEncoding conn of
+    catch (case enc of
              TextEncoding{mkTextDecoder=mkDecoder} -> do
                 bracket mkDecoder Enc.close $ \decoder ->
                   fetch decoder conn n)
@@ -110,10 +111,10 @@ readBlock ref n =
                                   (conn,s2) <- fetch decoder conn' (n-(bufferElems bbuf-bufferElems bbuf'))
                                   return (conn,s1++s2)
 
-readLine :: Connection -> IO String
-readLine ref =
+readLine :: Connection -> TextEncoding -> IO String
+readLine ref enc =
   onNonClosedDo ref $ \conn ->
-    catch (case connEncoding conn of
+    catch (case enc of
              TextEncoding{mkTextDecoder=mkDecoder} -> do
                 bracket mkDecoder Enc.close $ \decoder ->
                   fetch decoder conn)
@@ -169,22 +170,16 @@ readLine ref =
             then return (bbuf{bufR=i+1}, True)
             else scanNL (i+1) bbuf
 
--- The 'Connection' object allows no outward buffering,
--- since in general messages are serialised in their entirety.
-writeBlock :: Connection -> String -> IO ()
-writeBlock ref s =
+writeAscii :: Connection -> String -> IO ()
+writeAscii ref s =
   onNonClosedDo ref $ \conn ->
-    case connEncoding conn of
-      TextEncoding{mkTextEncoder=mkEncoder} ->
-         bracket mkEncoder Enc.close $ \encoder -> send encoder conn s
+    send conn s
   where
-    send encoder conn cs =
+    send conn cs =
       let bbuf = connByteBuf conn
-          cbuf = connCharBuf conn
-      in if isEmptyBuffer cbuf && null cs
+      in if null cs
            then return (conn,())
-           else do (cbuf,cs) <- pokeElems cbuf cs
-                   (_,cbuf',bbuf_) <- encode encoder cbuf bbuf
+           else do (bbuf_,cs) <- pokeElems bbuf cs
                    let n = bufferElems bbuf_
                    withBuffer bbuf_ $ \ptr -> do
                      case connSSL conn of
@@ -192,18 +187,28 @@ writeBlock ref s =
                        Nothing  -> do _ <- Socket.sendBuf (connSock conn) ptr n
                                       return ()
                    let bbuf' = bufferRemove n bbuf_
-                       conn' = conn{connByteBuf=bbuf'
-                                   ,connCharBuf=cbuf'
-                                   }
-                   send encoder conn' cs
+                       conn' = conn{connByteBuf=bbuf'}
+                   send conn' cs
       where
-        pokeElems cbuf cs
-          | null cs || isFullCharBuffer cbuf = return (cbuf,cs)
-        pokeElems cbuf (c:cs)  = do
-          withBuffer cbuf $ \ptr ->
-            pokeElemOff ptr (bufR cbuf) c
-          pokeElems (bufferAdd 1 cbuf) cs    
+        pokeElems bbuf cs
+          | null cs || isFullCharBuffer bbuf = return (bbuf,cs)
+        pokeElems bbuf (c:cs)  = do
+          withBuffer bbuf $ \ptr ->
+            pokeElemOff ptr (bufR bbuf) (BS.c2w c)
+          pokeElems (bufferAdd 1 bbuf) cs    
 
+writeBlock :: Connection -> LBS.ByteString -> IO ()
+writeBlock ref lbs =
+  onNonClosedDo ref $ \conn -> do
+    mapM_ (send conn) (LBS.toChunks lbs)
+    return (conn,())
+  where
+    send conn (BS.PS fptr offs len) =
+      withForeignPtr fptr $ \ptr ->
+        case connSSL conn of
+          Just ssl -> SSL.writePtr ssl (ptr `plusPtr` offs) len
+          Nothing  -> do _ <- Socket.sendBuf (connSock conn) (ptr `plusPtr` offs) len
+                         return ()
 
 -- Closes a Connection.  Connection will no longer
 -- allow any of the other functions.  Notice that a Connection may close
@@ -293,21 +298,12 @@ socketConnection host port sock mb_ssl = do
          , connSSL      = mb_ssl
          , connByteBuf  = bbuf
          , connCharBuf  = cbuf
-         , connEncoding = latin1
          , connHost     = host
          , connPort     = port
          , connCloseEOF = False
          }
   v <- newMVar conn
   return (Connection v)
-
-setEncoding :: Connection -> TextEncoding -> IO ()
-setEncoding ref enc = 
-  modifyMVar_ (getRef ref) (\conn -> return conn{connEncoding=enc})
-
-getEncoding :: Connection -> IO TextEncoding
-getEncoding ref =
-  fmap connEncoding (readMVar (getRef ref))
 
 closeConnection :: Connection -> IO Bool -> IO ()
 closeConnection ref readL = do
@@ -350,7 +346,7 @@ isTCPConnectedTo conn host port = do
 closeIt :: Connection -> (String -> Bool) -> Bool -> IO ()
 closeIt c p b = do
    closeConnection c (if b
-                      then catch (fmap p (readLine c)) (\(e :: HttpError) -> return True)
+                      then catch (fmap p (readLine c latin1)) (\(e :: HttpError) -> return True)
                       else return True)
 
 closeEOF :: Connection -> Bool -> IO ()

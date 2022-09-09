@@ -41,10 +41,11 @@ module Network.HTTP.Base
        , RequestData
 
        , NormalizeRequestOptions(..)
-       , defaultNormalizeRequestOptions -- :: NormalizeRequestOptions ty
+       , defaultNormalizeRequestOptions
        , RequestNormalizer
 
-       , normalizeRequest   -- :: NormalizeRequestOptions ty -> Request ty -> Request ty
+       , normalizeRequest
+       , normalizeResponse
 
        , splitRequestURI
 
@@ -56,10 +57,7 @@ module Network.HTTP.Base
 
        , defaultGETRequest
        , mkRequest
-       , setRequestBody
 
-       , defaultUserAgent
-       , defaultServer
        , httpPackageVersion
 
        , getRequestVersion
@@ -83,6 +81,7 @@ import Control.Monad ( guard )
 import Control.Exception ( SomeException, catch )
 
 import Data.Word     ( Word8 )
+import Data.Int      ( Int64 )
 import Data.Char     ( chr, digitToInt, intToDigit, toLower, isDigit, isHexDigit )
 import Data.List     ( find )
 import Data.Maybe    ( listToMaybe, fromMaybe )
@@ -291,9 +290,7 @@ mkRequest meth uri = req
   req =
     Request { rqURI      = uri
             , rqBody     = ""
-            , rqHeaders  = [ Header HdrContentLength "0"
-                           , Header HdrUserAgent     defaultUserAgent
-                           ]
+            , rqHeaders  = [Header HdrUserAgent defaultUserAgent]
             , rqMethod   = meth
             }
 
@@ -329,15 +326,6 @@ rqQuery rq =
 
     fromhex4 d1 d2 d3 d4 = 256*fromhex2 d1 d2+fromhex2 d3 d4
     fromhex2 d1 d2 = 16*digitToInt d1+digitToInt d2
-
-
--- set rqBody, Content-Type and Content-Length headers.
-setRequestBody :: Request -> (String, String) -> Request
-setRequestBody req (typ, body) = req' { rqBody=body }
-  where
-    req' = replaceHeader HdrContentType typ .
-           replaceHeader HdrContentLength (show (length body)) $
-           req
 
 -----------------------------------------------------------------
 ------------------ Parsing --------------------------------------
@@ -621,6 +609,13 @@ normalizeHostURI opts req =
    Then we make the request-URI an abs_path and make sure that there
    is a Host header.
 -}
+
+normalizeResponse :: Maybe Int64  -- ^ Content length
+                  -> Response
+                  -> Response
+normalizeResponse mb_len =
+  maybe id (insertHeader HdrContentLength . show) mb_len .
+  insertHeaderIfMissing HdrServer defaultServer
 
 splitRequestURI :: URI -> ({-authority-}String, URI)
 splitRequestURI uri = (drop 2 (uriAuthToString id (uriAuthority uri) ""), uri{uriScheme="", uriAuthority=Nothing})

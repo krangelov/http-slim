@@ -38,11 +38,14 @@ module Network.HTTP.Headers
    , variableToHeaderName
 
    , Cookie(..), headersToCookies
+   
+   , getEncoding
    ) where
 
 import Data.Char (toLower,toUpper)
 import Network.HTTP.Cookie
 import Network.HTTP.Utils (trim, split, crlf, HttpError(..))
+import System.IO
 
 -- | The @Header@ data type pairs header names & values.
 data Header = Header HeaderName String
@@ -392,3 +395,16 @@ headersToCookies dom hdr hdrs =
                else st)
         ([],[])
         hdrs
+
+
+getEncoding :: [Header] -> IO TextEncoding
+getEncoding hdrs =
+  case lookupHeader HdrContentType hdrs of
+    Just val -> case dropWhile (/=';') val of
+                  (';':cs) -> case break (=='=') cs of
+                                (xs,'=':ys) | trim (map toLower xs) == "charset" ->
+                                     do enc <- mkTextEncoding (trim ys++"//IGNORE")
+                                        return enc
+                                _ -> return latin1
+                  _        -> return latin1
+    Nothing  -> return latin1
