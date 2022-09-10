@@ -87,14 +87,17 @@ readBlock ref enc n =
       | otherwise = do
           let bbuf = connByteBuf conn
               cbuf = connCharBuf conn
-          bbuf <- withBuffer bbuf $ \ptr0 -> do
-                    let ptr  = ptr0 `plusPtr` bufR bbuf
-                        size = min n (bufferAvailable bbuf)
-                    num <- case connSSL conn of
-                             Just ssl -> SSL.readPtr ssl ptr size
-                             Nothing  -> Socket.recvBuf (connSock conn) ptr size
-                    return (bufferAdd num bbuf)
-          (progress,bbuf_,cbuf_) <- encode decoder bbuf cbuf
+          bbuf <- if isEmptyBuffer bbuf
+                    then withBuffer bbuf $ \ptr -> do
+                           let size = min n (bufferAvailable bbuf)
+                           num <- case connSSL conn of
+                                    Just ssl -> SSL.readPtr ssl ptr size
+                                    Nothing  -> Socket.recvBuf (connSock conn) ptr size
+                           return (bufferAdd num bbuf)
+                    else return bbuf
+          let bbufN = bbuf{bufR=bufL bbuf+min n (bufferElems bbuf)}
+          (progress,bbuf_,cbuf_) <- encode decoder bbufN cbuf
+          putStrLn (summaryBuffer bbuf++summaryBuffer bbuf_)
           case progress of
             InvalidSequence -> do (bbuf',cbuf') <- recover decoder bbuf_ cbuf_
                                   let conn' = conn{connByteBuf=bbuf'
@@ -103,13 +106,17 @@ readBlock ref enc n =
                                   return (conn',[])
             _               -> do let len = bufferElems cbuf_
                                   s1 <- withBuffer cbuf_ (peekArray len)
-                                  bbuf' <- slideContents bbuf_
+                                  bbuf' <- if bufR bbufN == bufR bbuf
+                                             then return bbuf_{bufL=0,bufR=0}
+                                             else slideContents (bbuf_{bufL=bufR bbufN
+                                                                      ,bufR=bufR bbuf})
                                   let cbuf' = bufferRemove len cbuf_
                                       conn' = conn{connByteBuf=bbuf'
                                                   ,connCharBuf=cbuf'
                                                   }
                                   (conn,s2) <- fetch decoder conn' (n-(bufferElems bbuf-bufferElems bbuf'))
                                   return (conn,s1++s2)
+
 
 readLine :: Connection -> TextEncoding -> IO String
 readLine ref enc =
