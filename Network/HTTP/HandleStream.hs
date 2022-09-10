@@ -259,12 +259,10 @@ chunkedTransferC :: Connection
                  -> Int
                  -> IO ([Header], String)
 chunkedTransferC conn enc acc n = do
-  line <- readLine conn enc
-  let size | null line = 0
-           | otherwise =
-               case readHex line of
-                 (hx,_):_ -> hx
-                 _        -> 0
+  line <- readLine conn latin1
+  size <- case readHex line of
+            [(hx,_)] -> return hx
+            _        -> throwIO (ErrorParse ("Cannot parse length in chunked encoding: "++line))
   if size == 0
     then do strs <- readTillEmpty2 conn enc []
             case parseHeaders strs of
@@ -273,7 +271,7 @@ chunkedTransferC conn enc acc n = do
                                let ftrs' = Header HdrContentLength (show n) : ftrs
                                return (ftrs',concat (reverse acc))
     else do cdata <- readBlock conn enc size
-            _     <- readLine conn enc
+            _     <- readLine conn latin1
             chunkedTransferC conn enc (cdata:acc) (n+size)
 
 -- | Maybe in the future we will have a sensible thing
