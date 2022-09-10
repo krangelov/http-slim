@@ -97,7 +97,6 @@ readBlock ref enc n =
                     else return bbuf
           let bbufN = bbuf{bufR=bufL bbuf+min n (bufferElems bbuf)}
           (progress,bbuf_,cbuf_) <- encode decoder bbufN cbuf
-          putStrLn (summaryBuffer bbuf++summaryBuffer bbuf_)
           case progress of
             InvalidSequence -> do (bbuf',cbuf') <- recover decoder bbuf_ cbuf_
                                   let conn' = conn{connByteBuf=bbuf'
