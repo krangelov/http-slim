@@ -77,7 +77,7 @@ import Network.URI
    , parseURIReference, uriAuthToString
    )
 
-import Control.Monad ( guard )
+import Control.Monad ( guard, mplus )
 import Control.Exception ( SomeException, catch )
 
 import Data.Word     ( Word8 )
@@ -311,9 +311,11 @@ rqQuery rq =
     pQuery = sepBy param (char '&')
     param = do
       var <- munch (\c -> c /= '=' && c /= '&')
-      char '='
-      val <- munch (\c -> c /= '&')
-      return (decode var,decode val)
+      (do char '='
+          val <- munch (\c -> c /= '&')
+          return (decode var,decode val)
+       `mplus`
+       do return (decode var,""))
 
     -- | Decode "+" and hexadecimal escapes
     decode [] = []
