@@ -9,7 +9,6 @@ import GHC.Show
 import System.IO
 import System.IO.Unsafe ( unsafePerformIO )
 import Network.HTTP.Utils
-import Debug.Trace
 
 -- ===================== TYPES AND CLASS DEFINTIONS ========================
 
@@ -30,7 +29,7 @@ addABCD (ABCD a1 b1 c1 d1) (ABCD a2 b2 c2 d2) = ABCD (a1 + a2) (b1 + b2) (c1 + c
 -- ===================== EXPORTED FUNCTIONS ========================
 
 md5 :: BS.ByteString -> ABCD
-md5 m = trace (show m) (md5_main 0 magic_numbers m)
+md5 m = md5_main 0 magic_numbers m
 
 -- | Encodes a string given the encoding and returns an MD5 hex number
 -- à la md5sum program
