@@ -30,7 +30,7 @@ addABCD (ABCD a1 b1 c1 d1) (ABCD a2 b2 c2 d2) = ABCD (a1 + a2) (b1 + b2) (c1 + c
 -- ===================== EXPORTED FUNCTIONS ========================
 
 md5 :: BS.ByteString -> ABCD
-md5 m = md5_main 0 magic_numbers m
+md5 m = trace (show m) (md5_main 0 magic_numbers m)
 
 -- | Encodes a string given the encoding and returns an MD5 hex number
 -- à la md5sum program
@@ -71,17 +71,21 @@ md5_main ilen abcd bs
 
     get_next 0 bs = ([],bs)
     get_next n bs
-      | len == 4  =
+      | len == 4   =
           let (ws,bs'') = get_next (n-1) bs'
           in (w:ws,bs'')
-      | otherwise =
-          let w1 = shiftL 0x80 (len * 8) + w
-              ws = replicate (fromIntegral zeros) 0++size
+      | zeros < 14 =
+          let ws = replicate (fromIntegral zeros) 0++size
           in (w1:ws,BS.empty)
+      | otherwise  =
+          let ws = replicate (fromIntegral n-1) 0
+              bs = BS.append (BS.replicate 56 0) (length_to_bytes 8 c64)
+          in (w1:ws, bs)
       where
         (s, bs') = BS.splitAt 4 bs
         len      = fromIntegral (BS.length s)
         w        = BS.foldr (\c w -> shiftL w 8 + fromIntegral c) 0 s
+        w1       = shiftL 0x80 (len * 8) + w
 
         c64  = ilen + 32 * (16 - n) + 8 * fromIntegral len
         c64' = ilen + 32 * (16 - n) + 32
@@ -91,6 +95,11 @@ md5_main ilen abcd bs
         size = [ fromIntegral (c64 .&. 0xFFFFFFFF)
                , fromIntegral (shiftR c64 32)
                ]
+
+        length_to_bytes 0 _ = BS.empty
+        length_to_bytes p n = BS.cons this (length_to_bytes (p-1) (shiftR n 8))
+          where
+            this = fromIntegral (n .&. 255)
 
 -- md5_do_block processes a 512 bit block by calling md5_round 4 times to
 -- apply each round with the correct constants and permutations of the
