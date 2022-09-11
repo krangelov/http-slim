@@ -27,10 +27,11 @@ import Network.URI
 import Network.HTTP.Base
 import Network.HTTP.Utils
 import Network.HTTP.Headers ( Header(..) )
-import qualified Network.HTTP.MD5Aux as MD5 (md5s, Str(Str))
+import Network.HTTP.MD5 (md5ss)
 import qualified Network.HTTP.Base64 as Base64 (encode)
 import Text.ParserCombinators.Parsec
    ( Parser, char, many, many1, satisfy, parse, spaces, sepBy1 )
+import System.IO ( utf8 )
 
 import Data.Char
 import Data.Maybe
@@ -100,7 +101,7 @@ withAuthority a rq = case a of
     where
         quo s = '"':s ++ "\""
 
-        rspdigest = map toLower (kd (md5 a1) (noncevalue ++ ":" ++ md5 a2))
+        rspdigest = map toLower (kd (md5ss utf8 a1) (noncevalue ++ ":" ++ md5ss utf8 a2))
 
         a1, a2 :: String
         a1 = auUsername a ++ ":" ++ auRealm a ++ ":" ++ auPassword a
@@ -126,11 +127,8 @@ stringToOctets = map (fromIntegral . fromEnum)
 base64encode :: String -> String
 base64encode = Base64.encode . stringToOctets
 
-md5 :: String -> String
-md5 = MD5.md5s . MD5.Str
-
 kd :: String -> String -> String
-kd a b = md5 (a ++ ":" ++ b)
+kd a b = md5ss utf8 (a ++ ":" ++ b)
 
 
 

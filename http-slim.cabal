@@ -79,11 +79,11 @@ Library
                  Network.HTTP.Cookie,
                  Network.HTTP.Proxy,
                  Network.HTTP.HandleStream,
+                 Network.HTTP.MD5,
                  Network.Browser,
                  Network.FastCGI
   Other-modules:
                  Network.HTTP.Base64,
-                 Network.HTTP.MD5Aux,
                  Network.HTTP.Utils
                  Paths_http_slim
   GHC-options: -fwarn-missing-signatures
