@@ -85,6 +85,7 @@ import Data.Int      ( Int64 )
 import Data.Char     ( chr, digitToInt, intToDigit, toLower, isDigit, isHexDigit )
 import Data.List     ( find )
 import Data.Maybe    ( listToMaybe, fromMaybe )
+import Data.Bits
 
 import Network.URI ( uriQuery )
 import Network.HTTP.Headers
@@ -322,9 +323,27 @@ rqQuery rq =
     decode ('%':'u':d1:d2:d3:d4:cs)
       | all isHexDigit [d1,d2,d3,d4] = chr(fromhex4 d1 d2 d3 d4):decode cs
     decode ('%':d1:d2:cs)
-      | all isHexDigit [d1,d2] = chr(fromhex2 d1 d2):decode cs
+      | all isHexDigit [d1,d2] = utf8_decode len u cs
+      where
+        d = fromhex2 d1 d2
+        len | d < 0x80  = 0
+            | d < 0xe0  = 1
+            | d < 0xf0  = 2
+            | d < 0xf8  = 3
+            | d < 0xfc  = 4
+            | otherwise = 5
+
+        mask = 0x0103070F1f7f;
+        u    = d .&. (mask `shiftR` (len * 8))
     decode ('+':cs) = ' ':decode cs
     decode (c:cs) = c:decode cs
+
+    utf8_decode 0   u cs             = chr u : decode cs
+    utf8_decode len u ('%':d1:d2:cs) = utf8_decode (len-1) u' cs
+      where
+        d  = fromhex2 d1 d2
+        u' = (u `shiftL` 6) .|. (d .&. 0x3f)
+    utf8_decode _   u cs             = decode cs -- character ignored 
 
     fromhex4 d1 d2 d3 d4 = 256*fromhex2 d1 d2+fromhex2 d3 d4
     fromhex2 d1 d2 = 16*digitToInt d1+digitToInt d2
