@@ -69,12 +69,19 @@ module Network.HTTP.Base
        
        , handleErrors
 
+#if MIN_VERSION_network_uri(2,6,2)
+#else
+       , uriAuthToString
+#endif
        ) where
 
 import Network.URI
    ( URI(uriAuthority, uriPath, uriScheme)
    , URIAuth(URIAuth, uriUserInfo, uriRegName, uriPort)
-   , parseURIReference, uriAuthToString
+   , parseURIReference
+#if MIN_VERSION_network_uri(2,6,2)
+   , uriAuthToString
+#endif
    )
 
 import Control.Monad ( guard, mplus )
@@ -640,6 +647,20 @@ normalizeResponse mb_len =
 
 splitRequestURI :: URI -> ({-authority-}String, URI)
 splitRequestURI uri = (drop 2 (uriAuthToString id (uriAuthority uri) ""), uri{uriScheme="", uriAuthority=Nothing})
+
+#if MIN_VERSION_network_uri(2,6,2)
+#else
+uriAuthToString :: (String->String) -> (Maybe URIAuth) -> ShowS
+uriAuthToString _           Nothing   = id          -- shows ""
+uriAuthToString userinfomap
+        (Just URIAuth { uriUserInfo = myuinfo
+                      , uriRegName  = myregname
+                      , uriPort     = myport
+                      } ) =
+    ("//"++) . (if null myuinfo then id else ((userinfomap myuinfo)++))
+             . (myregname++)
+             . (myport++)
+#endif
 
 -- Looks for a "Connection" header with the value "close".
 -- Returns True when this is found.

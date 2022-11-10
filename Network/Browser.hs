@@ -127,7 +127,9 @@ import Network.HTTP.Auth
 import Network.HTTP.Cookie
 import Network.HTTP.Proxy
 import Network.HTTP.Utils ( HttpError(..) )
+#if MIN_VERSION_network_uri(2,6,2)
 import Network.URI ( uriAuthToString )
+#endif
 
 #if (MIN_VERSION_base(4,9,0)) && !(MIN_VERSION_base(4,13,0))
 import Control.Monad.Fail
@@ -1051,3 +1053,9 @@ urlEncodeVars ((n,v):t) =
              urlEncodeRest diff = '&' : urlEncodeVars diff
              urlEncode = escapeURIString isUnescapedInURI
 urlEncodeVars [] = []
+
+
+
+#if MIN_VERSION_network_uri(2,6,2)
+#else
+#endif

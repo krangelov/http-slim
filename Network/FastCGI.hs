@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeSynonymInstances, FlexibleInstances, DeriveDataTypeable, ScopedTypeVariables #-}
+{-# LANGUAGE TypeSynonymInstances, FlexibleInstances, DeriveDataTypeable, ScopedTypeVariables, CPP #-}
 module Network.FastCGI
          ( -- * Accepting requests
            simpleFastCGI,
@@ -36,10 +36,12 @@ import qualified Data.ByteString.Char8 as BSC (unpack, pack)
 import Data.Char
 import Data.Maybe ( fromMaybe )
 import qualified Data.Map as Map
-import qualified Network.Socket as Socket
+import qualified Network.Socket as Socket hiding (recv)
 import qualified Network.Socket.ByteString as Socket
-import Network.URI ( URI(..), nullURI
-                   , URIAuth(..), nullURIAuth
+import Network.URI ( URI(..), URIAuth(..)
+#if MIN_VERSION_network_uri(2,6,2)
+                   , nullURI, nullURIAuth
+#endif
                    , parseURIReference )
 import Network.HTTP.Base
 import Network.HTTP.Headers
@@ -119,7 +121,11 @@ simpleFastCGI
     -> IO ()
     -- ^ Never actually returns.
 simpleFastCGI handler = do
+#if MIN_VERSION_network(3,0,0)
   listenSocket <- Socket.mkSocket 0
+#else
+  listenSocket <- Socket.mkSocket 0 Socket.AF_INET Socket.Stream Socket.defaultProtocol Socket.NotConnected
+#endif
   let acceptLoop' = do
         (socket, peer) <- Socket.accept listenSocket
         let state = FastCGIState {
@@ -232,6 +238,26 @@ requestLoop state handler = do
         _ -> fLog state (recordRequestID record)
                   ("Ignoring record of unexpected type "++show (recordType record))
 
+#if MIN_VERSION_network_uri(2,6,2)
+#else
+-- |Blank URI
+nullURI :: URI
+nullURI = URI
+    { uriScheme     = ""
+    , uriAuthority  = Nothing
+    , uriPath       = ""
+    , uriQuery      = ""
+    , uriFragment   = ""
+    }
+
+-- |Blank URIAuth.
+nullURIAuth :: URIAuth
+nullURIAuth = URIAuth
+    { uriUserInfo   = ""
+    , uriRegName    = ""
+    , uriPort       = ""
+    }
+#endif
 
 processRequestVariable :: String -> String -> PartialRequest -> PartialRequest
 processRequestVariable "REQUEST_METHOD" value prq =
