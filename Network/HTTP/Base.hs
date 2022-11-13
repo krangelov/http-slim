@@ -312,9 +312,9 @@ rqQuery rq =
     _   -> []
   where
     qparse =
-      case rqMethod rq of
-        POST -> readP_to_S pQuery (rqBody rq)
-        _    -> readP_to_S (char '?' >> pQuery) (uriQuery (rqURI rq))
+      case findHeader HdrContentType rq of
+        Just "application/x-www-form-urlencoded" -> readP_to_S pQuery (rqBody rq)
+        _                                        -> readP_to_S (char '?' >> pQuery) (uriQuery (rqURI rq))
 
     pQuery = sepBy param (char '&')
     param = do
