@@ -124,7 +124,7 @@ simpleFastCGI handler = do
 #if MIN_VERSION_network(3,0,0)
   listenSocket <- Socket.mkSocket 0
 #else
-  listenSocket <- Socket.mkSocket 0 Socket.AF_INET Socket.Stream Socket.defaultProtocol Socket.NotConnected
+  listenSocket <- Socket.mkSocket 0 Socket.AF_INET Socket.Stream Socket.defaultProtocol Socket.Listening
 #endif
   let acceptLoop' = do
         (socket, peer) <- Socket.accept listenSocket
