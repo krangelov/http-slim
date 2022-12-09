@@ -154,7 +154,7 @@ readLine ref enc =
                         -> return (conn, [])
           | otherwise   -> do let len = bufferElems cbuf_
                               s1 <- withBuffer cbuf_ (peekArray len)
-                              bbuf' <- if bufR bbufNL == bufR bbuf
+                              bbuf' <- if bufR bbufNL >= bufR bbuf
                                          then return bbuf_{bufL=0,bufR=0}
                                          else slideContents (bbuf_{bufL=bufR bbufNL
                                                                   ,bufR=bufR bbuf})
@@ -168,8 +168,8 @@ readLine ref enc =
                                         return (conn,s1++s2)
 
     scanNL i bbuf
-      | i > bufR bbuf = return (bbuf, False)
-      | otherwise     = do
+      | i >= bufR bbuf = return (bbuf, False)
+      | otherwise      = do
           c <- withBuffer bbuf $ \ptr ->
                  peekElemOff ptr i
           if c == fromIntegral (ord '\n')
