@@ -731,7 +731,7 @@ request' nullVal rqState rq = do
        case auth of
          Nothing -> return rq
          Just x  -> return (insertHeader HdrAuthorization (withAuthority x rq) rq)
-   let rq'' = if not $ null cookies then insertHeaders [Header HdrCookie (renderCookies cookies)] rq' else rq'
+   let rq'' = if not $ null cookies then replaceHeader HdrCookie (renderCookie cookies) rq' else rq'
    p <- getProxy
    def_ua <- gets bsUserAgent
    let defaultOpts =
@@ -980,7 +980,7 @@ handleCookies uri dom cookieHeaders = do
        (out $ "Accepting cookies with names: " ++ unwords (map ckName newCookies'))
   mapM_ addCookie newCookies'
  where
-  (errs, newCookies) = headersToCookies dom HdrSetCookie cookieHeaders
+  (errs, newCookies) = processSetCookies cookieHeaders
 
 handleConnectionClose :: URIAuth -> [Header] -> BrowserAction ()
 handleConnectionClose _ [] = return ()

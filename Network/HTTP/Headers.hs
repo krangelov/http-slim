@@ -30,6 +30,7 @@ module Network.HTTP.Headers
    , insertHeaders         -- :: HasHeaders a => [Header] -> a -> a
    , retrieveHeaders       -- :: HasHeaders a => HeaderName -> a -> [Header]
    , replaceHeader         -- :: HasHeaders a => HeaderName -> String -> a -> a
+   , replaceHeaders
    , findHeader            -- :: HasHeaders a => HeaderName -> a -> Maybe String
    , lookupHeader          -- :: HeaderName -> [Header] -> Maybe String
 
@@ -37,7 +38,7 @@ module Network.HTTP.Headers
    , parseHeaders          -- :: [String] -> Result [Header]
    , variableToHeaderName
 
-   , Cookie(..), headersToCookies
+   , Cookie(..), processCookie, processSetCookies
    
    , getEncoding
    ) where
@@ -303,6 +304,16 @@ replaceHeader name value x = setHeaders x (update (getHeaders x))
 insertHeaders :: HasHeaders a => [Header] -> a -> a
 insertHeaders hdrs x = setHeaders x (getHeaders x ++ hdrs)
 
+-- | @replaceHeader hdr val o@ replaces the header @hdr@ with the
+-- value @val@, dropping any existing
+replaceHeaders :: HasHeaders a => HeaderName -> [String] -> a -> a
+replaceHeaders name values x = setHeaders x (update (getHeaders x))
+  where
+    update []     = [Header name value | value <- values]
+    update (h@(Header n _) : rest)
+      | n == name = update rest
+      | otherwise = h : update rest
+
 -- | @retrieveHeaders hdrNm x@ gets a list of headers with 'HeaderName' @hdrNm@.
 retrieveHeaders :: HasHeaders a => HeaderName -> a -> [Header]
 retrieveHeaders name x = filter matchname (getHeaders x)
@@ -386,15 +397,20 @@ parseHeaders = parseLines [] . joinExtended ""
         Just hdr -> parseLines (hdr:hdrs) ls
         Nothing  -> Left (ErrorParse ("Unable to parse header: " ++ l))
 
--- | @processCookieHeaders dom hdrs@
-headersToCookies :: String -> HeaderName -> [Header] -> ([String], [Cookie])
-headersToCookies dom hdr hdrs =
-  foldr (\(Header hdr' val) st ->
-             if hdr == hdr'
-               then parseCookies dom val st
+-- | process SetCookie headers and extract the cookies and the errors
+processSetCookies :: [Header] -> ([String], [Cookie])
+processSetCookies hdrs =
+  foldr (\(Header hdr val) st ->
+             if hdr == HdrSetCookie
+               then parseSetCookie val st
                else st)
         ([],[])
         hdrs
+
+-- | @processCookieHeaders dom hdrs@
+processCookie :: String -> [Header] -> Maybe [Cookie]
+processCookie dom hdrs =
+  lookupHeader HdrCookie hdrs >>= parseCookie dom
 
 
 getEncoding :: [Header] -> IO TextEncoding

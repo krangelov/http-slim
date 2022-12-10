@@ -18,8 +18,8 @@ module Network.HTTP.Cookie
        , cookieMatch          -- :: (String,String) -> Cookie -> Bool
 
           -- functions for translating cookies and headers.
-       , renderCookies
-       , parseCookies
+       , renderSetCookie, renderCookie
+       , parseSetCookie,  parseCookie
        ) where
 
 import Data.Char
@@ -101,12 +101,9 @@ instance Eq Cookie where
 
 -- | Turn a list of cookies into a key=value pair list, separated by
 -- commas.
-renderCookies :: [Cookie] -> String
-renderCookies = intercalate "," . map renderCookie
+renderSetCookie :: Cookie -> String
+renderSetCookie = intercalate ";" . map printNameValuePair . nameValuePairs
   where
-    renderCookie cookie =
-      intercalate ";" $ map printNameValuePair $ nameValuePairs cookie
-      
     printNameValuePair (name, Nothing   ) = name
     printNameValuePair (name, Just value) = name ++ "=" ++ value
     
@@ -119,14 +116,23 @@ renderCookies = intercalate "," . map renderCookie
                                   domain -> [("Domain", Just domain)])
                             ++ (case ckMaxAge cookie of
                                   Nothing -> []
-                                  Just maxAge -> [("Max-Age", Just $ show maxAge)])
+                                  Just maxAge -> [("Max-Age", Just (show maxAge))])
                             ++ (case ckPath cookie of
                                   Nothing -> []
-                                  Just path -> [("Path", Just $ path)])
+                                  Just path -> [("Path", Just path)])
                             ++ (case ckSecure cookie of
                                   False -> []
                                   True -> [("Secure", Nothing)])
-                            ++ [("Version", Just $ show $ ckVersion cookie)]
+                            ++ (case ckVersion cookie of
+                                  Nothing      -> []
+                                  Just version -> [("Version", Just version)])
+
+-- | Turn a list of cookies into a key=value pair list, separated by
+-- commas.
+renderCookie :: [Cookie] -> String
+renderCookie = intercalate ";" . map printNameValuePair
+  where
+    printNameValuePair cookie = ckName cookie ++ "=" ++ ckValue cookie
 
 -- | @cookieMatch (domain,path) ck@ performs the standard cookie
 -- match wrt the given domain and path.
@@ -138,16 +144,13 @@ cookieMatch (dom,path) ck =
    Just p  -> p `isPrefixOf` path
 
 
--- | @headerToCookies dom hdr acc@
-parseCookies :: String -> String -> ([String], [Cookie]) -> ([String], [Cookie])
-parseCookies dom  val (accErr, accCookie) =
-  case parse cookies "" val of
+-- | parse a SetCookie header into a list of cookies and errors
+parseSetCookie :: String -> ([String], [Cookie]) -> ([String], [Cookie])
+parseSetCookie val (accErr, accCookie) =
+  case parse cookie "" val of
     Left{}  -> (val:accErr, accCookie)
-    Right x -> (accErr, x ++ accCookie)
+    Right x -> (accErr, x : accCookie)
   where
-   cookies :: Parser [Cookie]
-   cookies = sepBy1 cookie (char ',')
-
    cookie :: Parser Cookie
    cookie =
        do name <- word
@@ -159,7 +162,7 @@ parseCookies dom  val (accErr, accCookie) =
           return (MkCookie
                     { ckName    = name
                     , ckValue   = val1
-                    , ckDomain  = map toLower (fromMaybe dom (lookup "domain" args))
+                    , ckDomain  = map toLower (fromMaybe "" (lookup "domain" args))
                     , ckPath    = lookup "path"    args
                     , ckVersion = lookup "version" args
                     , ckComment = lookup "comment" args
@@ -168,11 +171,6 @@ parseCookies dom  val (accErr, accCookie) =
                                     Just s  -> parseInt s
                     , ckSecure  = isJust (lookup "secure" args)
                     })
-
-   cvalue :: Parser String
-   cvalue = quotedstring <|> many1 (satisfy $ not . (==';')) <|> return ""
-
-   spaces_l = many (satisfy isSpace)
 
    -- all keys in the result list MUST be in lower case
    cdetail :: Parser [(String,String)]
@@ -186,6 +184,39 @@ parseCookies dom  val (accErr, accCookie) =
                return (map toLower s1,s2)
            )
 
+-- | parse a Cookie header into a cookie
+parseCookie :: String -> String -> Maybe [Cookie]
+parseCookie dom val =
+  case parse cookies "" val of
+    Left{}  -> Nothing
+    Right x -> Just x
+  where
+   cookies :: Parser [Cookie]
+   cookies = sepBy1 cookie (char ';')
+
+   cookie :: Parser Cookie
+   cookie =
+       do name <- word
+          _    <- spaces_l
+          _    <- char '='
+          _    <- spaces_l
+          val1 <- cvalue
+          return (MkCookie
+                    { ckName    = name
+                    , ckValue   = val1
+                    , ckDomain  = dom
+                    , ckPath    = Nothing
+                    , ckVersion = Nothing
+                    , ckComment = Nothing
+                    , ckMaxAge  = Nothing
+                    , ckSecure  = False
+                    })
+
+cvalue :: Parser String
+cvalue = quotedstring <|> many1 (satisfy $ not . (==';')) <|> return ""
+
+spaces_l :: Parser String
+spaces_l = many (satisfy isSpace)
 
 word, quotedstring :: Parser String
 quotedstring =

@@ -96,7 +96,7 @@ import Data.Bits
 
 import Network.URI ( uriQuery )
 import Network.HTTP.Headers
-import Network.HTTP.Cookie ( renderCookies )
+import Network.HTTP.Cookie ( renderSetCookie, renderCookie )
 import Network.HTTP.Utils ( trim, crlf, sp, 
                             HttpError(..), readsOne )
 import qualified Network.HTTP.Base64 as Base64 (encode)
@@ -221,8 +221,13 @@ instance HasHeaders Request where
     getHeaders = rqHeaders
     setHeaders rq hdrs = rq { rqHeaders=hdrs }
 
-    getCookies rq = snd (headersToCookies "" HdrCookie (rqHeaders rq))
-    setCookies rq cookies = replaceHeader HdrCookie (renderCookies cookies) rq
+    getCookies rq = fromMaybe [] (processCookie "" (rqHeaders rq))
+                    where
+                      path = uriPath (rqURI rq)
+                      dom  = if null path || head path /= '/'
+                              then '/' : path
+                              else path
+    setCookies rq cookies = replaceHeader HdrCookie (renderCookie cookies) rq
 
 -- | For easy pattern matching, HTTP response codes @xyz@ are
 -- represented as @(x,y,z)@.
@@ -262,8 +267,8 @@ instance HasHeaders Response where
   getHeaders = rspHeaders
   setHeaders rsp hdrs = rsp { rspHeaders=hdrs }
 
-  getCookies rsp = snd (headersToCookies "" HdrSetCookie (rspHeaders rsp))
-  setCookies rsp cookies = replaceHeader HdrCookie (renderCookies cookies) rsp
+  getCookies rsp = snd (processSetCookies (rspHeaders rsp))
+  setCookies rsp cookies = replaceHeaders HdrSetCookie [renderSetCookie cookie | cookie <- cookies] rsp
 
 
 ------------------------------------------------------------------
