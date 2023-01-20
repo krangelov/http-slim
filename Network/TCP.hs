@@ -319,18 +319,19 @@ closeConnection ref readL = do
     -- threads will simply back off if/when attempting
     -- to also close it.
   c <- readMVar (getRef ref)
-  closeConn c `catch` (\(_ :: IOException) -> return ())
+  closeConn c
   modifyMVar_ (getRef ref) (\ _ -> return ConnClosed)
  where
    -- Be kind to peer & close gracefully.
   closeConn ConnClosed = return ()
-  closeConn conn = do
-    case connSSL conn of
-      Just ssl -> SSL.shutdown ssl SSL.Unidirectional
-      Nothing  -> return ()
-    shutdown (connSock conn) ShutdownSend
-    suck readL
-    shutdown (connSock conn) ShutdownReceive
+  closeConn conn       = do
+    catch (do case connSSL conn of
+                Just ssl -> SSL.shutdown ssl SSL.Unidirectional
+                Nothing  -> return ()
+              shutdown (connSock conn) ShutdownSend
+              suck readL
+              shutdown (connSock conn) ShutdownReceive)
+          (\(_ :: IOException) -> return ())
     Socket.close (connSock conn)
 
   suck :: IO Bool -> IO ()
