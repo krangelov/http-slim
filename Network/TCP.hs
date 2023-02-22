@@ -1,4 +1,4 @@
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE ScopedTypeVariables, ForeignFunctionInterface #-}
 -----------------------------------------------------------------------------
 -- |
 -- Module      :  Network.TCP
@@ -45,7 +45,9 @@ import Control.Exception ( IOException, bracketOnError,
 import Control.Monad ( when )
 import Data.Char  ( ord, toLower )
 import Foreign
+import Foreign.C.Types
 import System.IO.Error ( isEOFError )
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Internal as BS ( ByteString(..), c2w )
 import qualified Data.ByteString.Lazy as LBS
 import GHC.IO.Buffer
@@ -60,12 +62,13 @@ newtype Connection = Connection {getRef :: MVar Conn}
 
 data Conn
  = MkConn { connSock      :: !Socket
-          , connSSL       :: Maybe SSL.SSL
-          , connByteBuf   :: Buffer Word8
-          , connCharBuf   :: Buffer Char
-          , connHost      :: String
-          , connPort      :: Int
-          , connCloseEOF  :: Bool -- True => close socket upon reaching end-of-stream.
+          , connSSL       ::  Maybe SSL.SSL
+          , connByteBuf   ::  Buffer Word8
+          , connCharBuf   ::  Buffer Char
+          , connChunkBits :: !Int
+          , connHost      ::  String
+          , connPort      :: !Int
+          , connCloseEOF  ::  Bool -- True => close socket upon reaching end-of-stream.
           }
  | ConnClosed
 
@@ -83,38 +86,44 @@ readBlock ref enc n =
                     else throwIO e)
   where
     fetch decoder conn n
-      | n <= 0    = return (conn,[])
-      | otherwise = do
-          let bbuf = connByteBuf conn
-              cbuf = connCharBuf conn
-          bbuf <- if isEmptyBuffer bbuf
-                    then withBuffer bbuf $ \ptr -> do
-                           let size = min n (bufferAvailable bbuf)
+      | n > 0 = do
+          bbuf <- if size > 0
+                    then withBuffer bbuf $ \buf_ptr -> do
+                           let ptr = buf_ptr `plusPtr` bufR bbuf
                            num <- case connSSL conn of
                                     Just ssl -> SSL.readPtr ssl ptr size
                                     Nothing  -> Socket.recvBuf (connSock conn) ptr size
                            return (bufferAdd num bbuf)
                     else return bbuf
-          let bbufN = bbuf{bufR=bufL bbuf+min n (bufferElems bbuf)}
+          let bbufN = bbuf{bufR=bufL bbuf+min (n+connChunkBits conn) (bufferElems bbuf)}
           (progress,bbuf_,cbuf_) <- encode decoder bbufN cbuf
-          case progress of
-            InvalidSequence -> do (bbuf',cbuf') <- recover decoder bbuf_ cbuf_
-                                  let conn' = conn{connByteBuf=bbuf'
-                                                  ,connCharBuf=cbuf'
-                                                  }
-                                  return (conn',[])
-            _               -> do let len = bufferElems cbuf_
-                                  s1 <- withBuffer cbuf_ (peekArray len)
-                                  bbuf' <- if bufR bbufN == bufR bbuf
-                                             then return bbuf_{bufL=0,bufR=0}
-                                             else slideContents (bbuf_{bufL=bufR bbufN
-                                                                      ,bufR=bufR bbuf})
-                                  let cbuf' = bufferRemove len cbuf_
-                                      conn' = conn{connByteBuf=bbuf'
-                                                  ,connCharBuf=cbuf'
-                                                  }
-                                  (conn,s2) <- fetch decoder conn' (n-(bufferElems bbuf-bufferElems bbuf'))
-                                  return (conn,s1++s2)
+
+          (bbuf_,cbuf_,n_,b) <-
+              let count = bufferElems bbufN-connChunkBits conn
+              in case progress of
+                   InputUnderflow  -> return (bbuf_,cbuf_,n-count,bufferElems bbuf_)
+                   OutputUnderflow -> return (bbuf_,cbuf_,n-(count-bufferElems bbuf_),0)
+                   InvalidSequence -> do (bbuf_,cbuf_) <- recover decoder bbuf_ cbuf_
+                                         return (bbuf_,cbuf_,n-(count-bufferElems bbuf_),0)
+          let len   = bufferElems cbuf_
+              cbuf' = bufferRemove len cbuf_
+          s1 <- withBuffer cbuf_ (peekArray len)
+          bbuf' <- if bufL bbuf_ == bufR bbuf_
+                     then if bufR bbufN == bufR bbuf
+                            then return bbuf{bufL=0,bufR=0}
+                            else slideContents (bbuf{bufL=bufR bbufN})
+                     else slideContents (bbuf{bufL=bufL bbuf_})
+          let conn' = conn{connByteBuf=bbuf'
+                          ,connCharBuf=cbuf'
+                          ,connChunkBits=b
+                          }
+          (conn,s2) <- fetch decoder conn' n_
+          return (conn,s1++s2)
+      | otherwise = return (conn,[])
+      where
+        bbuf = connByteBuf conn
+        cbuf = connCharBuf conn
+        size = min (n-bufferElems bbuf+connChunkBits conn) (bufferAvailable bbuf)
 
 
 readLine :: Connection -> TextEncoding -> IO String
@@ -134,47 +143,57 @@ readLine ref enc =
     fetch decoder conn = do
       let bbuf = connByteBuf conn
           cbuf = connCharBuf conn
-      bbuf <- if isEmptyBuffer bbuf
-                then withBuffer bbuf $ \ptr -> do
-                       let size = bufferAvailable bbuf
+          size = bufferAvailable bbuf
+      bbuf <- if size > 0
+                then withBuffer bbuf $ \buf_ptr -> do
+                       let ptr = buf_ptr `plusPtr` bufR bbuf
                        num <- case connSSL conn of
                                 Just ssl -> SSL.readPtr ssl ptr size
                                 Nothing  -> Socket.recvBuf (connSock conn) ptr size
                        return (bufferAdd num bbuf)
                 else return bbuf
-      (bbufNL,nl) <- scanNL (bufL bbuf) bbuf
-      (progress,bbuf_,cbuf_) <- encode decoder bbufNL cbuf
-      case progress of
-        InvalidSequence -> do (bbuf',cbuf') <- recover decoder bbuf cbuf
-                              let conn' = conn{connByteBuf=bbuf'
-                                              ,connCharBuf=cbuf'
-                                              }
-                              return (conn', [])
-        _ | isEmptyBuffer cbuf_
-                        -> return (conn, [])
-          | otherwise   -> do let len = bufferElems cbuf_
-                              s1 <- withBuffer cbuf_ (peekArray len)
-                              bbuf' <- if bufR bbufNL >= bufR bbuf
-                                         then return bbuf_{bufL=0,bufR=0}
-                                         else slideContents (bbuf_{bufL=bufR bbufNL
-                                                                  ,bufR=bufR bbuf})
-                              let cbuf' = bufferRemove len cbuf_
-                                  conn' = conn{connByteBuf=bbuf'
-                                              ,connCharBuf=cbuf'
-                                              }
-                              if nl
-                                then return (conn', s1)
-                                else do (conn,s2) <- fetch decoder conn'
-                                        return (conn,s1++s2)
+      if bufferElems bbuf == connChunkBits conn
+        then return (conn, [])
+        else do let start = bufL bbuf+connChunkBits conn
+                (bbufNL,nl) <- scanNL start bbuf{bufL=start}
+                (progress,bbuf_,cbuf_) <- encode decoder bbufNL cbuf
+                (bbuf_,cbuf_) <- case progress of
+                                   InvalidSequence -> recover decoder bbuf_ cbuf_
+                                   _               -> return (bbuf_,cbuf_)
+                let len   = bufferElems cbuf_
+                    cbuf' = bufferRemove len cbuf_
+                s1 <- withBuffer cbuf_ (peekArray len)
+                bbuf' <- if connChunkBits conn+(bufR bbuf-bufR bbufNL)+bufferElems bbuf_ <= 0
+                           then return bbuf_{bufL=0,bufR=0}
+                           else slideContents' start (bufR bbufNL-bufferElems bbuf_) bbuf
+                let conn' = conn{connByteBuf=bbuf'
+                                ,connCharBuf=cbuf'
+                                }
+                if nl && bufferElems bbuf_ == 0
+                  then return (conn', s1)
+                  else do (conn,s2) <- fetch decoder conn'
+                          return (conn,s1++s2)
 
     scanNL i bbuf
-      | i >= bufR bbuf = return (bbuf, False)
+      | i >= bufR bbuf =
+          return (bbuf, False)
       | otherwise      = do
           c <- withBuffer bbuf $ \ptr ->
                  peekElemOff ptr i
           if c == fromIntegral (ord '\n')
             then return (bbuf{bufR=i+1}, True)
             else scanNL (i+1) bbuf
+
+slideContents' :: Int -> Int -> Buffer Word8 -> IO (Buffer Word8)
+slideContents' start end buf@Buffer{ bufR=r, bufRaw=raw } = do
+  let elems = r - end
+  withRawBuffer raw $ \p ->
+      do _ <- memmove (p `plusPtr` start) (p `plusPtr` end) (fromIntegral elems)
+         return ()
+  return buf{ bufR=start+elems }
+
+foreign import ccall unsafe "memmove"
+   memmove :: Ptr a -> Ptr a -> CSize -> IO (Ptr a)
 
 writeAscii :: Connection -> String -> IO ()
 writeAscii ref s =
@@ -304,6 +323,7 @@ socketConnection host port sock mb_ssl = do
          , connSSL      = mb_ssl
          , connByteBuf  = bbuf
          , connCharBuf  = cbuf
+         , connChunkBits= 0
          , connHost     = host
          , connPort     = port
          , connCloseEOF = False
