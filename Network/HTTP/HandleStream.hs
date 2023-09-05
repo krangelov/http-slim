@@ -222,7 +222,6 @@ writeHeaders :: Connection -> Response -> IO ()
 writeHeaders conn rsp = do
   let rsp' = normalizeResponse Nothing rsp
   _ <- writeAscii conn (show rsp')
-  putStrLn (show rsp')
   return ()
 
 ------------------------------------------------------------------------------
