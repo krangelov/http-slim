@@ -21,7 +21,8 @@ module Network.TCP
    , readBlock
    , readLine
    , writeAscii
-   , writeBlock
+   , writeByteString
+   , writeBytes
    , close, closeOnEnd
    ) where
 
@@ -144,7 +145,7 @@ readLine ref enc =
       let bbuf = connByteBuf conn
           cbuf = connCharBuf conn
           size = bufferAvailable bbuf
-      bbuf <- if size > 0
+      bbuf <- if bufferElems bbuf == 0
                 then withBuffer bbuf $ \buf_ptr -> do
                        let ptr = buf_ptr `plusPtr` bufR bbuf
                        num <- case connSSL conn of
@@ -222,8 +223,8 @@ writeAscii ref s =
             pokeElemOff ptr (bufR bbuf) (BS.c2w c)
           pokeElems (bufferAdd 1 bbuf) cs    
 
-writeBlock :: Connection -> LBS.ByteString -> IO ()
-writeBlock ref lbs =
+writeByteString :: Connection -> LBS.ByteString -> IO ()
+writeByteString ref lbs =
   onNonClosedDo ref $ \conn -> do
     mapM_ (send conn) (LBS.toChunks lbs)
     return (conn,())
@@ -234,6 +235,14 @@ writeBlock ref lbs =
           Just ssl -> SSL.writePtr ssl (ptr `plusPtr` offs) len
           Nothing  -> do _ <- Socket.sendBuf (connSock conn) (ptr `plusPtr` offs) len
                          return ()
+
+writeBytes :: Connection -> Ptr Word8 -> Int -> IO Int
+writeBytes ref ptr len =
+  onNonClosedDo ref $ \conn -> do
+    n <- case connSSL conn of
+           Just ssl -> SSL.writePtr ssl ptr len >> return len
+           Nothing  -> Socket.sendBuf (connSock conn) ptr len
+    return (conn,n)
 
 -- Closes a Connection.  Connection will no longer
 -- allow any of the other functions.  Notice that a Connection may close

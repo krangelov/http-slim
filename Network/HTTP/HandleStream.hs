@@ -22,6 +22,7 @@ module Network.HTTP.HandleStream
        , sendHTTP_notify -- :: Connection -> Request -> IO () -> IO Response
        , receiveHTTP     -- :: Connection -> IO Request
        , respondHTTP     -- :: Connection -> Response -> IO ()
+       , writeHeaders
        ) where
 
 -----------------------------------------------------------------
@@ -30,7 +31,7 @@ module Network.HTTP.HandleStream
 
 import Network.URI ( uriRegName )
 import Network.TCP ( Connection, openTCPConnection, close, closeOnEnd,
-                     readBlock, readLine, writeAscii, writeBlock )
+                     readBlock, readLine, writeAscii, writeByteString )
 
 import Network.HTTP.Base
 import Network.HTTP.Headers
@@ -101,7 +102,7 @@ sendMain conn rqst onSendComplete = do
   lbs <- encodeString enc (rqBody rqst)
   let rqst' = insertHeader HdrContentLength (show (LBS.length lbs)) rqst
   _ <- writeAscii conn (show rqst')
-  _ <- writeBlock conn lbs
+  _ <- writeByteString conn lbs
   onSendComplete
   rsp <- getResponseHead conn
   switchResponse conn True False rsp rqst'
@@ -212,18 +213,25 @@ respondHTTP conn rsp = do
   bs <- encodeString enc (rspBody rsp)
   let rsp' = normalizeResponse (Just (LBS.length bs)) rsp
   _ <- writeAscii conn (show rsp')
-  writeBlock conn bs
+  writeByteString conn bs
+
+-- | @writeHeaders conn httpResponse@ transmits only the headers of 
+-- response. This is useful if you want to trasmit the body separately
+-- perhaps in a specific way.
+writeHeaders :: Connection -> Response -> IO ()
+writeHeaders conn rsp = do
+  let rsp' = normalizeResponse Nothing rsp
+  _ <- writeAscii conn (show rsp')
+  putStrLn (show rsp')
+  return ()
 
 ------------------------------------------------------------------------------
 
-headerName :: String -> String
-headerName x = map toLower (trim x)
-
 ifChunked :: a -> a -> String -> a
 ifChunked a b s =
-  case headerName s of
+  case map toLower (trim s) of
     "chunked" -> a
-    _ -> b
+    _         -> b
 
 -- | Used when we know exactly how many bytes to expect.
 linearTransfer :: Connection -> TextEncoding -> Int -> IO ([Header],String)

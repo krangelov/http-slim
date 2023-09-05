@@ -54,6 +54,9 @@ module Network.HTTP
        , simpleServer     -- :: SockAddr -> (Request -> IO Response) -> IO ()
        , simpleServerBind -- :: Int -> HostAddress -> (Request -> IO Response) -> IO ()
 
+       , server           -- :: SockAddr -> (Connection -> IO ()) -> IO ()
+       , serverBind       -- :: Int -> HostAddress -> (Connection -> IO ()) -> IO ()
+
        , outputChunked
        , outputHTML
        , outputText
@@ -64,6 +67,7 @@ module Network.HTTP
        , sendHTTP_notify  -- :: Connection -> Request -> IO () -> IO Response
        , S.receiveHTTP    -- :: Connection -> IO Request
        , S.respondHTTP    -- :: Connection -> Response -> IO ()
+       , S.writeHeaders   -- :: Connection -> Response -> IO ()
 
        , module Network.TCP
 
@@ -81,7 +85,8 @@ import Network.HTTP.Headers
 import Network.HTTP.Base
 import Network.HTTP.Utils ( crlf )
 import qualified Network.HTTP.HandleStream as S ( sendHTTP, sendHTTP_notify,
-                                                  receiveHTTP, respondHTTP )
+                                                  receiveHTTP, respondHTTP,
+                                                  writeHeaders )
 import Network.TCP
 import Network.URI ( parseURI, uriRegName )
 import qualified Network.Socket as Socket
@@ -190,20 +195,40 @@ postRequest urlString =
     Just u  -> mkRequest POST u
 
 simpleServer
-   :: Maybe Int                      -- ^ http  port
-   -> Maybe (Int,FilePath,FilePath)  -- ^ https port,private and public keys
-   -> (Request -> IO Response)       -- ^ The functionality of the Server
+   :: Maybe Int                                -- ^ http  port
+   -> Maybe (Int,FilePath,FilePath)            -- ^ https port,private and public keys
+   -> (Request -> IO Response)                 -- ^ The functionality of the Server
    -> IO ()
 simpleServer mb_http_port mb_https_port callOut =
   simpleServerBind mb_http_port mb_https_port iNADDR_ANY callOut
 
 simpleServerBind
-   :: Maybe Int                     -- ^ http  port
-   -> Maybe (Int,FilePath,FilePath) -- ^ https port,private and public keys
-   -> Socket.HostAddress            -- ^ The host address
-   -> (Request -> IO Response)      -- ^ The functionality of the Server
+   :: Maybe Int                                -- ^ http  port
+   -> Maybe (Int,FilePath,FilePath)            -- ^ https port,private and public keys
+   -> Socket.HostAddress                       -- ^ The host address
+   -> (Request -> IO Response) -- ^ The functionality of the Server
    -> IO ()
-simpleServerBind mb_http_port mb_https_port addr callOut = do
+simpleServerBind mb_http_port mb_https_port addr callOut = 
+  serverBind mb_http_port mb_https_port addr 
+             (\stream -> handleErrors putStrLn
+                                      (S.receiveHTTP stream >>= callOut) >>=
+                                      S.respondHTTP stream)
+
+server
+   :: Maybe Int                                -- ^ http  port
+   -> Maybe (Int,FilePath,FilePath)            -- ^ https port,private and public keys
+   -> (Connection -> IO ())                 -- ^ The functionality of the Server
+   -> IO ()
+server mb_http_port mb_https_port callOut =
+  serverBind mb_http_port mb_https_port iNADDR_ANY callOut
+
+serverBind
+   :: Maybe Int                                -- ^ http  port
+   -> Maybe (Int,FilePath,FilePath)            -- ^ https port,private and public keys
+   -> Socket.HostAddress                       -- ^ The host address
+   -> (Connection -> IO ()) -- ^ The functionality of the Server
+   -> IO ()
+serverBind mb_http_port mb_https_port addr callOut = do
   case mb_https_port of
     Just (port,priv_key,cert_key)
             -> do ctxt <- SSL.context
@@ -218,19 +243,19 @@ simpleServerBind mb_http_port mb_https_port addr callOut = do
                         SSL.accept ssl
                         return (Just ssl)
 
-                  fork (simpleServerMain (SockAddrInet (fromIntegral port) addr) mkSSL callOut)
+                  fork (serverMain (SockAddrInet (fromIntegral port) addr) mkSSL callOut)
     Nothing -> return ()
   case mb_http_port of
     Just port -> do let noSSL sock = return Nothing
-                    simpleServerMain (SockAddrInet (fromIntegral port) addr) noSSL callOut
+                    serverMain (SockAddrInet (fromIntegral port) addr) noSSL callOut
     Nothing   -> return ()
 
-simpleServerMain
+serverMain
    :: SockAddr
    -> (Socket -> IO (Maybe SSL.SSL))
-   -> (Request -> IO Response)
+   -> (Connection -> IO ())
    -> IO ()
-simpleServerMain sockaddr mkSSL callOut = do
+serverMain sockaddr mkSSL callOut = do
   num <- getProtocolNumber "tcp"
   sock <- socket Socket.AF_INET Socket.Stream num
   setSocketOption sock Socket.ReuseAddr 1
@@ -242,10 +267,8 @@ simpleServerMain sockaddr mkSSL callOut = do
 
              forkIO $
                bracket (socketConnection "localhost" (fromIntegral num) acceptedSock mb_ssl)
-                       (close)
-                       (\stream -> handleErrors putStrLn
-                                      (S.receiveHTTP stream >>= callOut) >>=
-                                   S.respondHTTP stream)
+                       close
+                       callOut
          ) `finally` (Socket.close sock)
   where
     loopIO m = m >> loopIO m
