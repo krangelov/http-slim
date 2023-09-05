@@ -131,6 +131,7 @@ data HeaderName
  | HdrETag
  | HdrExpires
  | HdrLastModified
+ | HdrContentDisposition
     -- | MIME entity headers (for sub-parts)
  | HdrContentTransferEncoding
     -- | Allows for unrecognised or experimental headers.
@@ -192,6 +193,7 @@ instance Eq HeaderName where
     HdrExpires                 == HdrExpires                 = True
     HdrLastModified            == HdrLastModified            = True
     HdrContentTransferEncoding == HdrContentTransferEncoding = True
+    HdrContentDisposition      == HdrContentDisposition      = True 
     _                          == _                          = False
 
 
@@ -252,6 +254,7 @@ headerMap =
    , p "Expires"                   "HTTP_EXPIRES"                   HdrExpires
    , p "Last-Modified"             "HTTP_LAST_MODIFIED"             HdrLastModified
    , p "Content-Transfer-Encoding" "HTTP_CONTENT_TRANSFER_ENCODING" HdrContentTransferEncoding
+   , p "Content-Disposition"       "HTTP_CONTENT_DISPOSITION"       HdrContentDisposition
    ]
  where
   p a b c = (a,b,c)
