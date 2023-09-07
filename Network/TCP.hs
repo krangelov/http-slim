@@ -234,13 +234,13 @@ writeByteString ref lbs =
           Just ssl -> SSL.writePtr ssl (ptr `plusPtr` offs) len
           Nothing  -> writeSocketPtr (connSock conn) (ptr `plusPtr` offs) len
 
-writeBytes :: Connection -> Ptr Word8 -> Int -> IO Int
+writeBytes :: Connection -> Ptr Word8 -> Int -> IO ()
 writeBytes ref ptr len = do
   onNonClosedDo ref $ \conn -> do
     case connSSL conn of
       Just ssl -> SSL.writePtr ssl ptr len
       Nothing  -> writeSocketPtr (connSock conn) ptr len
-    return (conn,len)
+    return (conn,())
 
 writeSocketPtr :: Socket -> Ptr Word8 -> Int -> IO ()
 writeSocketPtr conn ptr 0   = return ()
