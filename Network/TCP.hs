@@ -210,8 +210,7 @@ writeAscii ref s =
                    withBuffer bbuf_ $ \ptr -> do
                      case connSSL conn of
                        Just ssl -> SSL.writePtr ssl ptr n
-                       Nothing  -> do _ <- Socket.sendBuf (connSock conn) ptr n
-                                      return ()
+                       Nothing  -> writeSocketPtr (connSock conn) ptr n
                    let bbuf' = bufferRemove n bbuf_
                        conn' = conn{connByteBuf=bbuf'}
                    send conn' cs
@@ -233,16 +232,21 @@ writeByteString ref lbs =
       withForeignPtr fptr $ \ptr ->
         case connSSL conn of
           Just ssl -> SSL.writePtr ssl (ptr `plusPtr` offs) len
-          Nothing  -> do _ <- Socket.sendBuf (connSock conn) (ptr `plusPtr` offs) len
-                         return ()
+          Nothing  -> writeSocketPtr (connSock conn) (ptr `plusPtr` offs) len
 
 writeBytes :: Connection -> Ptr Word8 -> Int -> IO Int
-writeBytes ref ptr len =
+writeBytes ref ptr len = do
   onNonClosedDo ref $ \conn -> do
-    n <- case connSSL conn of
-           Just ssl -> SSL.writePtr ssl ptr len >> return len
-           Nothing  -> Socket.sendBuf (connSock conn) ptr len
-    return (conn,n)
+    case connSSL conn of
+      Just ssl -> SSL.writePtr ssl ptr len
+      Nothing  -> writeSocketPtr (connSock conn) ptr len
+    return (conn,len)
+
+writeSocketPtr :: Socket -> Ptr Word8 -> Int -> IO ()
+writeSocketPtr conn ptr 0   = return ()
+writeSocketPtr conn ptr len = do
+  n <- Socket.sendBuf conn ptr len
+  writeSocketPtr conn (ptr `plusPtr` n) (len-n)
 
 -- Closes a Connection.  Connection will no longer
 -- allow any of the other functions.  Notice that a Connection may close
