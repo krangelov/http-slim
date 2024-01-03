@@ -1,6 +1,9 @@
 {-# LANGUAGE TypeSynonymInstances, FlexibleInstances, DeriveDataTypeable, ScopedTypeVariables, CPP #-}
 module Network.FastCGI
-         ( -- * Accepting requests
+         ( module Network.HTTP.Base,
+           module Network.HTTP.Headers,
+
+           -- * Accepting requests
            simpleFastCGI,
 
            -- * Environment
@@ -24,7 +27,15 @@ module Network.FastCGI
            getServerPort,
            getServerProtocol,
            getServerSoftware,
-           getAuthenticationType
+           getAuthenticationType,
+
+           -- * Low-level API
+           Connection,
+           fastCGI,
+           writeResponse,
+           writeHeaders,
+           writeString,
+           writeByteString
          ) where
 
 import Control.Concurrent
@@ -121,6 +132,19 @@ simpleFastCGI
     -> IO ()
     -- ^ Never actually returns.
 simpleFastCGI handler = do
+  fastCGI $ \env rq conn -> do
+     rsp <- handleErrors (fLog conn)
+                         (handler env rq)
+     writeResponse conn rsp
+
+-- | Takes a handler, and concurrently accepts requests from the web server
+--   by calling the handler.
+fastCGI
+    :: (Env -> Request -> Connection -> IO ())
+    -- ^ A handler which is invoked once for each incoming connection.
+    -> IO ()
+    -- ^ Never actually returns.
+fastCGI handler = do
 #if MIN_VERSION_network(3,0,0)
   listenSocket <- Socket.mkSocket 0
 #else
@@ -137,13 +161,16 @@ simpleFastCGI handler = do
         acceptLoop'
   acceptLoop'
 
-requestLoop :: FastCGIState -> ([(String,String)] -> Request -> IO Response) -> IO ()
+data Connection = Connection FastCGIState Int
+
+requestLoop :: FastCGIState -> (Env -> Request -> Connection -> IO ()) -> IO ()
 requestLoop state handler = do
   maybeRecord <- recvRecord state
   case maybeRecord of
     Nothing -> do
       Socket.close (fcgiSocket state)
     Just record -> do
+      let conn = Connection state (recordRequestID record)
       case recordType record of
         BeginRequestRecord -> do
           let req = Request { rqURI=nullURI
@@ -164,14 +191,12 @@ requestLoop state handler = do
                             }
           requestLoop state' handler
         GetValuesRecord -> do
-          fLog state (recordRequestID record)
-               ("Get values record: " ++ show record)
+          fLog conn ("Get values record: " ++ show record)
           requestLoop state handler
         ParamsRecord -> do
           let requestID = recordRequestID record
           case Map.lookup requestID (fcgiRequests state) of
-            Nothing -> fLog state (recordRequestID record)
-                            ("Ignoring record for unknown request ID " ++ show requestID)
+            Nothing -> fLog conn ("Ignoring record for unknown request ID " ++ show requestID)
             Just prq
               | BS.length (recordContent record) == 0 -> do
                    enc <- getEncoding (rqHeaders (prqReq prq))
@@ -202,20 +227,13 @@ requestLoop state handler = do
           let requestID = recordRequestID record
           case Map.lookup requestID (fcgiRequests state) of
             Nothing  -> 
-               fLog state (recordRequestID record)
-                          ("Ignoring record for unknown request ID " ++ show requestID)
+               fLog conn ("Ignoring record for unknown request ID " ++ show requestID)
             Just prq
               | BS.length (recordContent record) == 0 -> do
-                   forkIO $ do
-                     rsp <- handleErrors (fLog state requestID)
-                               (handler (prqEnv prq)
-                                        (prqReq prq){rqBody=concat (reverse (prqBody prq))})
-                     sendResponse state requestID rsp
-                     sendRecord state $ Record {
-                       recordType = EndRequestRecord,
-                       recordRequestID = requestID,
-                       recordContent = BS.pack [0, 0, 0, 0, 0, 0, 0, 0]
-                     }
+                   forkIO $
+                     handler (prqEnv prq)
+                             (prqReq prq){rqBody=concat (reverse (prqBody prq))}
+                             conn
                    let state' = state{fcgiRequests=Map.delete
                                                          requestID
                                                          (fcgiRequests state)}
@@ -235,8 +253,15 @@ requestLoop state handler = do
             recordContent = BS.pack [fromIntegral unknownCode,
                                      0, 0, 0, 0, 0, 0, 0]
           }
-        _ -> fLog state (recordRequestID record)
-                  ("Ignoring record of unexpected type "++show (recordType record))
+        _ -> fLog conn ("Ignoring record of unexpected type "++show (recordType record))
+
+{-
+                     sendRecord state $ Record {
+                       recordType = EndRequestRecord,
+                       recordRequestID = requestID,
+                       recordContent = BS.pack [0, 0, 0, 0, 0, 0, 0, 0]
+                     }
+-}
 
 #if MIN_VERSION_network_uri(2,6,2)
 #else
@@ -391,8 +416,8 @@ takeNameValuePair byteString
                           in Just ((name, value), byteString'''')
 
 -- | Logs a message using the web server's logging facility.
-fLog :: FastCGIState -> Int -> String -> IO ()
-fLog state requestID message
+fLog :: Connection -> String -> IO ()
+fLog (Connection state requestID) message
   | length message > 0 =
       sendRecord state $ Record {
         recordType = StderrRecord,
@@ -519,24 +544,18 @@ sendBuffer state requestID buffer = do
     then sendBuffer state requestID bufferRemaining
     else return ()
 
-sendBody :: FastCGIState -> Int -> LBS.ByteString -> IO ()
-sendBody state requestID lbs =
-  mapM_ send (LBS.toChunks lbs)
-  where
-    send bs =
-      sendRecord state $ Record {
-         recordType = StdoutRecord,
-         recordRequestID = requestID,
-         recordContent = bs
-      }
-
-sendResponse :: FastCGIState -> Int -> Response -> IO ()
-sendResponse state requestID rsp = do
+writeResponse :: Connection -> Response -> IO ()
+writeResponse conn rsp = do
   enc <- getEncoding (rspHeaders rsp)
-  bs <- encodeString enc (rspBody rsp)
-  let rsp' = normalizeResponse (Just (LBS.length bs)) rsp
-      status  = show (rspCode rsp')
-      headers = rspHeaders rsp'
+  lbs <- encodeString enc (rspBody rsp)
+  let rsp' = normalizeResponse (Just (LBS.length lbs)) rsp
+  writeHeaders conn rsp'
+  mapM_ (writeByteString conn) (LBS.toChunks lbs)
+
+writeHeaders :: Connection -> Response -> IO ()
+writeHeaders (Connection state requestID) rsp = do
+  let status  = show (rspCode rsp)
+      headers = rspHeaders rsp
       nameValuePairs = ("Status", status) :
                        map (\(Header hdr val) -> (show hdr,val))
                            headers
@@ -546,4 +565,16 @@ sendResponse state requestID rsp = do
             ++ [BSC.pack "\r\n"]
       buffer = foldl BS.append BS.empty bytestrings
   sendBuffer state requestID buffer
-  sendBody state requestID bs
+
+writeString :: Connection -> TextEncoding -> String -> IO ()
+writeString conn enc s = do 
+  lbs <- encodeString enc s
+  mapM_ (writeByteString conn) (LBS.toChunks lbs)
+
+writeByteString :: Connection -> BS.ByteString -> IO ()
+writeByteString (Connection state requestID) bs =
+  sendRecord state $ Record {
+     recordType = StdoutRecord,
+     recordRequestID = requestID,
+     recordContent = bs
+  }

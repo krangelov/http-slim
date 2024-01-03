@@ -54,27 +54,30 @@ module Network.HTTP
        , simpleServer     -- :: SockAddr -> (Request -> IO Response) -> IO ()
        , simpleServerBind -- :: Int -> HostAddress -> (Request -> IO Response) -> IO ()
 
-       , server           -- :: SockAddr -> (Connection -> IO ()) -> IO ()
-       , serverBind       -- :: Int -> HostAddress -> (Connection -> IO ()) -> IO ()
-
        , outputChunked
        , outputHTML
        , outputText
        , httpError
 
-       -- ** Low-level API
-       , sendHTTP         -- :: Connection -> Request -> IO Response
-       , sendHTTP_notify  -- :: Connection -> Request -> IO () -> IO Response
-       , S.receiveHTTP    -- :: Connection -> IO Request
-       , S.respondHTTP    -- :: Connection -> Response -> IO ()
-       , S.writeHeaders   -- :: Connection -> Response -> IO ()
-
-       , module Network.TCP
-
        -- ** Create requests
        , getRequest          -- :: String -> Request
        , headRequest         -- :: String -> Request
        , postRequest         -- :: String -> Request
+
+       -- ** Low-level API
+       , Connection
+       , openTCPConnection   -- :: Maybe a0 -> String -> Int -> IO Connection
+       , isTCPConnectedTo    -- :: Connection -> String -> Int -> IO Bool
+       , sendHTTP            -- :: Connection -> Request -> IO Response
+       , sendHTTP_notify     -- :: Connection -> Request -> IO () -> IO Response
+       , S.receiveHTTP       -- :: Connection -> IO Request
+       , S.respondHTTP       -- :: Connection -> Response -> IO ()
+       , S.writeHeaders      -- :: Connection -> Response -> IO ()
+       , writeAscii          -- :: Connection -> String -> IO ()
+       , writeBytes          -- :: Connection -> Ptr Word8 -> Int -> IO ()
+       , server              -- :: Maybe Int -> Maybe (Int,FilePath,FilePath) -> (Connection -> IO ()) -> IO ()
+       , serverBind          -- :: Maybe Int -> Maybe (Int,FilePath,FilePath) -> HostAddress -> (Connection -> IO ()) -> IO ()
+       , close               -- :: Connection -> IO ()
        ) where
 
 -----------------------------------------------------------------
