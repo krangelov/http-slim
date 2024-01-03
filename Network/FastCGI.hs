@@ -35,7 +35,8 @@ module Network.FastCGI
            writeResponse,
            writeHeaders,
            writeString,
-           writeByteString
+           writeByteString,
+           close
          ) where
 
 import Control.Concurrent
@@ -578,3 +579,11 @@ writeByteString (Connection state requestID) bs =
      recordRequestID = requestID,
      recordContent = bs
   }
+
+close :: Connection -> IO ()
+close (Connection state requestID) = do
+  sendRecord state $ Record {
+                       recordType = EndRequestRecord,
+                       recordRequestID = requestID,
+                       recordContent = BS.pack [0, 0, 0, 0, 0, 0, 0, 0]
+                     }
