@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 -----------------------------------------------------------------------------
 -- |
 -- Module      :  Network.HTTP.Utils
@@ -174,6 +175,9 @@ decodeString enc bs =
                    bufRaw   = fptr,
                    bufState = ReadBuffer,
                    bufSize  = offs+len,
+#if MIN_VERSION_base(4,15,0)
+                   bufOffset= 0,
+#endif
                    bufL = offs,
                    bufR = offs+len
                  }
