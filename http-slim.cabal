@@ -21,7 +21,7 @@ tested-with:
 
 Source-Repository head
   type: git
-  location: https://github.com/haskell/HTTP.git
+  location: https://github.com/krangelov/http-slim.git
 
 flag network-uri
   description: Get Network.URI from the network-uri package
