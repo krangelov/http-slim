@@ -9,6 +9,9 @@ Maintainer: Krasimir Angelov <kr.angelov@gmail.com>
 Homepage: https://github.com/krangelov/http-slim
 Category: Network
 Synopsis: A library for client/server HTTP with TLS support
+Description:
+  A simple HTTP client/server package with minimal dependencies
+  to other packages. FastCGI interface is included as well.
 
 tested-with:
   GHC==9.2.1, GHC==9.0.1,
