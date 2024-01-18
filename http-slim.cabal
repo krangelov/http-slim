@@ -6,40 +6,9 @@ License: BSD3
 License-file: LICENSE
 Author: Krasimir Angelov <kr.angelov@gmail.com>
 Maintainer: Krasimir Angelov <kr.angelov@gmail.com>
-Homepage: https://github.com/haskell/HTTP
+Homepage: https://github.com/krangelov/http-slim
 Category: Network
 Synopsis: A library for client/server HTTP with TLS support
-Description:
-
- This package supports client/server web programming in Haskell. It lets you set up
- HTTP connections, transmitting requests and processing the responses coming back, all
- from within the comforts of Haskell. It's dependent on the network package to operate,
- but other than that, the implementation is all written in Haskell.
- .
- A basic API for issuing single HTTP requests + receiving responses is provided. On top
- of that, a session-level abstraction is also on offer  (the @BrowserAction@ monad);
- it taking care of handling the management of persistent connections, proxies,
- state (cookies) and authentication credentials required to handle multi-step
- interactions with a web server.
- .
- Here's an example use:
- .
- >
- >    do
- >      rsp <- Network.HTTP.simpleHTTP (getRequest "http://www.haskell.org/")
- >              -- fetch document and return it (as a 'String'.)
- >      fmap (take 100) (getResponseBody rsp)
- >
- >    do
- >      (_, rsp)
- >         <- Network.Browser.browse $ do
- >               setAllowRedirects True -- handle HTTP redirects
- >               request $ getRequest "http://www.haskell.org/"
- >      return (take 100 (rspBody rsp))
- >
- >    do simpleServer 8080 $ \req ->
- >         outputHTML ("<p>Hello, world</p>\n<pre>"++show req++"</pre>")
- >
 
 tested-with:
   GHC==9.2.1, GHC==9.0.1,
@@ -49,15 +18,6 @@ tested-with:
 Source-Repository head
   type: git
   location: https://github.com/haskell/HTTP.git
-
-Flag conduit10
-  description: Use version 1.0.x or below of the conduit package (for the test suite)
-  default: False
-
-Flag warp-tests
-  description: Test against warp
-  default:     False
-  manual:      True
 
 flag network-uri
   description: Get Network.URI from the network-uri package
