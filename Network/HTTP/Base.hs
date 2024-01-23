@@ -722,6 +722,6 @@ handleErrors logIt f =
       return (Response
                 { rspCode = code
                 , rspReason = reason
-                , rspHeaders = []
+                , rspHeaders = [Header HdrContentType "plain/text; charset=utf-8"]
                 , rspBody = body
                 })
