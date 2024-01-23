@@ -40,7 +40,7 @@ import Data.List ( elemIndex )
 import Data.Maybe ( fromMaybe )
 import Control.Exception
 import GHC.IO.Buffer
-import GHC.IO.Encoding ( TextEncoding(..), latin1, mkTextEncoding, encode )
+import GHC.IO.Encoding ( TextEncoding(..), CodingProgress(..), latin1, mkTextEncoding, encode )
 import qualified GHC.IO.Encoding as Enc
 import qualified Data.ByteString.Internal as BS ( ByteString(..) )
 import qualified Data.ByteString.Lazy as LBS
@@ -154,10 +154,13 @@ encodeString enc s = do
       | isEmptyBuffer cbuf && null cs = return bss
       | otherwise = do (cbuf,cs) <- pokeElems cbuf cs
                        bbuf <- newByteBuffer max_len WriteBuffer
-                       (_,cbuf',bbuf') <- encode encoder cbuf bbuf
+                       (p,cbuf',bbuf') <- encode encoder cbuf bbuf
                        let bs = BS.PS (bufRaw bbuf')
                                       (bufL bbuf')
                                       (bufferElems bbuf')
+                           cbuf'' = case p of
+                                      InvalidSequence -> bufferRemove 1 cbuf'
+                                      _               -> cbuf'
                        convert encoder cbuf' cs (bs:bss)
       where
         pokeElems cbuf cs
