@@ -137,6 +137,7 @@ simpleFastCGI handler = do
      rsp <- handleErrors (fLog conn)
                          (handler env rq)
      writeResponse conn rsp
+     close conn
 
 -- | Takes a handler, and concurrently accepts requests from the web server
 --   by calling the handler.
