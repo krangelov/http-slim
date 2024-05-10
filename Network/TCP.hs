@@ -145,7 +145,7 @@ readLine ref enc =
       let bbuf = connByteBuf conn
           cbuf = connCharBuf conn
           size = bufferAvailable bbuf
-      bbuf <- if bufferElems bbuf == 0
+      bbuf <- if bufferElems bbuf == connChunkBits conn
                 then withBuffer bbuf $ \buf_ptr -> do
                        let ptr = buf_ptr `plusPtr` bufR bbuf
                        num <- case connSSL conn of
