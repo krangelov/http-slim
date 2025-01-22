@@ -53,7 +53,7 @@ Library
   -- note the test harness constraints should be kept in sync with these
   -- where dependencies are shared
   build-depends:
-      base          >= 4.6.0.0   && < 4.17
+      base          >= 4.6.0.0   && < 4.21
     , array         >= 0.3.0.2   && < 0.6
     , parsec        >= 2.0       && < 3.2
     , time          >= 1.1.2.3   && < 1.13
@@ -62,10 +62,10 @@ Library
     -- The following dependencies are refined by flags, but they should
     -- still be mentioned here on the top-level.
     , mtl           >= 2.0.0.0   && < 2.4
-    , network       >= 2.4       && < 3.2
-    , HsOpenSSL
-    , bytestring
-    , containers
+    , network       >= 2.4       && < 3.3
+    , HsOpenSSL                     < 0.12
+    , bytestring                    < 0.13
+    , containers                    < 0.8
 
   default-language: Haskell98
   default-extensions: FlexibleInstances
