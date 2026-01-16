@@ -115,6 +115,8 @@ module Network.Browser
        , FormVar
        ) where
 
+#include "cabal_macros.h"
+
 import Network.URI
    ( URI(..)
    , URIAuth(..)
