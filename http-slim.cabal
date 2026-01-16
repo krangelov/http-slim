@@ -1,6 +1,6 @@
 Cabal-Version: >= 1.10
 Name: http-slim
-Version: 1.0
+Version: 1.2
 Build-type: Simple
 License: BSD3
 License-file: LICENSE
@@ -12,7 +12,8 @@ Synopsis: A library for client/server HTTP with TLS support
 Description:
   A simple HTTP client/server package with minimal dependencies
   to other packages. Most of the code is derived from 
-  the older HTTP package. FastCGI interface is included as well.
+  the older HTTP package. Server mode as well as FastCGI interface are
+  included as well.
 
 tested-with:
   GHC==9.6.6, GHC==9.2.1, GHC==9.0.1,
@@ -53,7 +54,7 @@ Library
   -- note the test harness constraints should be kept in sync with these
   -- where dependencies are shared
   build-depends:
-      base          >= 4.6.0.0
+      base          >= 4.6.0.0   && < 4.22
     , array         >= 0.3.0.2   && < 0.6
     , parsec        >= 2.0       && < 3.2
     , time          >= 1.1.2.3   && < 1.13
@@ -63,9 +64,9 @@ Library
     -- still be mentioned here on the top-level.
     , mtl           >= 2.0.0.0   && < 2.4
     , network       >= 2.4       && < 3.3
-    , HsOpenSSL
-    , bytestring
-    , containers
+    , HsOpenSSL                     < 0.12
+    , bytestring                    < 0.13
+    , containers                    < 0.8
 
   default-language: Haskell98
   default-extensions: FlexibleInstances
